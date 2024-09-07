@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"maps"
 	"sync"
 
 	"github.com/eqimd/accord/common"
@@ -134,6 +135,15 @@ func (r *Replica) Accept(
 
 	if r.rs.txnInfo[txn].highestTs.Less(ts) {
 		r.rs.txnInfo[txn].highestTs = ts
+
+		/*
+			Origin article does not contain this statement
+
+			Although it is needed because otherwise consensus
+			can deadlock: t_txn can be less than T_txn,
+			but when processing Apply(...) we should await
+			all dependencies with lower t to be applied
+		*/
 		r.rs.txnInfo[txn].ts = ts
 	}
 
@@ -181,10 +191,11 @@ func (r *Replica) Read(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.awaitCommitted(deps.Deps)
-	r.awaitApplied(ts, deps.Deps)
+	depsCopy := maps.Clone(deps.Deps)
+	depsCopy.Add(txn)
 
-	// r.awaitCommittedAndApplied(ts, deps.Deps)
+	r.awaitCommitted(depsCopy)
+	r.awaitApplied(ts, deps.Deps)
 
 	reads := map[string]string{}
 	for key := range keys {
@@ -206,10 +217,11 @@ func (r *Replica) Apply(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.awaitCommitted(deps.Deps)
-	r.awaitApplied(ts, deps.Deps)
+	depsCopy := maps.Clone(deps.Deps)
+	depsCopy.Add(txn)
 
-	// r.awaitCommittedAndApplied(ts, deps.Deps)
+	r.awaitCommitted(depsCopy)
+	r.awaitApplied(ts, deps.Deps)
 
 	for k, v := range result {
 		r.storage.Set(k, v)
@@ -303,55 +315,6 @@ func (r *Replica) awaitApplied(ts message.Timestamp, txns common.Set[message.Tra
 
 			wg.Done()
 		}(tx)
-	}
-
-	r.mu.Unlock()
-
-	wg.Wait()
-
-	r.mu.Lock()
-}
-
-func (r *Replica) awaitCommittedAndApplied(ts message.Timestamp, txns common.Set[message.Transaction]) {
-	var wg sync.WaitGroup
-
-	for tx := range txns {
-		info, ok := r.rs.txnInfo[tx]
-		if !ok {
-			continue
-		}
-
-		if info.state == Applied {
-			continue
-		}
-
-		if info.state != Committed {
-			waitChCommitted := make(chan struct{})
-
-			r.rs.commitsPubSub[tx] = append(r.rs.commitsPubSub[tx], waitChCommitted)
-
-			wg.Add(1)
-			go func() {
-				<-waitChCommitted
-
-				wg.Done()
-			}()
-		}
-
-		if !(r.rs.txnInfo[tx].ts.Less(ts)) {
-			continue
-		}
-
-		waitChApplied := make(chan struct{})
-
-		r.rs.appliesPubSub[tx] = append(r.rs.appliesPubSub[tx], waitChApplied)
-
-		wg.Add(1)
-		go func(tsTxn, tsCmp message.Timestamp) {
-			<-waitChApplied
-
-			wg.Done()
-		}(ts, r.rs.txnInfo[tx].ts)
 	}
 
 	r.mu.Unlock()
