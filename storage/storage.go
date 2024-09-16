@@ -1,4 +1,4 @@
-package cluster
+package storage
 
 import (
 	"maps"

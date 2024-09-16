@@ -6,6 +6,7 @@ import (
 
 	"github.com/eqimd/accord/common"
 	"github.com/eqimd/accord/message"
+	"github.com/eqimd/accord/storage"
 )
 
 type State int
@@ -32,7 +33,7 @@ type Replica struct {
 
 	pid     int
 	env     *Environment
-	storage *Storage
+	storage *storage.Storage
 
 	rs *replicaState
 }
@@ -68,7 +69,7 @@ func NewReplica(pid int, env *Environment) *Replica {
 		state:   StateRunning,
 		pid:     pid,
 		env:     env,
-		storage: NewStorage(),
+		storage: storage.NewStorage(),
 		rs:      newReplicaState(),
 	}
 }

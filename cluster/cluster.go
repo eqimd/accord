@@ -1,7 +1,5 @@
 package cluster
 
-import "fmt"
-
 type Cluster struct {
 	env *Environment
 }
@@ -23,21 +21,12 @@ func (cl *Cluster) Exec(query string, coordinatorPid int) (string, error) {
 	return result, err
 }
 
-func (cl *Cluster) Snapshot() map[string]string {
-	kv := map[string]string{}
+func (cl *Cluster) Snapshot() map[int]map[string]string {
+	replicaToSnapshot := map[int]map[string]string{}
 
-	for i := 0; i < cl.env.Shards; i++ {
-		for j := 0; j < cl.env.ReplicasPerShard; j++ {
-			replicaPid := (i * cl.env.ReplicasPerShard) + j
-			snapshot := cl.env.replicas[replicaPid].storage.Snapshot()
-
-			for k, v := range snapshot {
-				kv[k] = v
-			}
-
-			fmt.Println(replicaPid, ":", snapshot)
-		}
+	for _, replica := range cl.env.replicas {
+		replicaToSnapshot[replica.pid] = replica.storage.Snapshot()
 	}
 
-	return kv
+	return replicaToSnapshot
 }

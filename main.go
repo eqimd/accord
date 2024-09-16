@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"math/rand"
 	"sync"
 	"time"
@@ -28,15 +29,15 @@ func String(length int) string {
 }
 
 func main() {
-	for range 100 {
-		shardsCount := 2
-		replicasPerShard := 2
-		runsCount := 2
+	for range 1 {
+		shardsCount := 3
+		replicasPerShard := 3
+		runsCount := 10000
 
 		cluster := cluster.NewCluster(shardsCount, replicasPerShard)
 
-		keys := make([]string, 0, 1)
-		for range 1 {
+		keys := make([]string, 0, 5)
+		for range cap(keys) {
 			keys = append(keys, String(10))
 		}
 
@@ -76,10 +77,38 @@ func main() {
 		}()
 
 		for s := range resCh {
-			fmt.Println(s)
+			_ = s
+			// fmt.Println(s)
 		}
 
-		// _ = cluster.Snapshot()
+		time.Sleep(10 * time.Second)
+
+		for _, key := range keys {
+			q := fmt.Sprintf("let val = GET(\"%s\"); val", key)
+			res, _ := cluster.Exec(q, shardsCount*replicasPerShard)
+
+			fmt.Println(key, "=", res)
+		}
+
+		fmt.Println()
+
+		snapshot := cluster.Snapshot()
+
+		for i, snsh := range snapshot {
+			fmt.Println("pid", i)
+			fmt.Println(snsh, "\n")
+		}
+
+		for i := 0; i < shardsCount; i++ {
+			pid1 := i * replicasPerShard
+			snsh := snapshot[pid1]
+
+			for j := i*replicasPerShard + 1; j < (i+1)*replicasPerShard; j++ {
+				if !maps.Equal(snsh, snapshot[j]) {
+					panic(fmt.Sprintf("not equal maps: pid1 = %d, pid2 = %d, map1 = %v, map2 = %v", pid1, j, snsh, snapshot[j]))
+				}
+			}
+		}
 	}
 }
 
