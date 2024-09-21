@@ -1,6 +1,7 @@
 package model
 
 type AcceptRequest struct {
+	Sender      int       `json:"sender"`
 	TxnHash     string    `json:"txn_hash"`
 	TsProposed  Timestamp `json:"ts_proposed"`
 	TxnKeys     []string  `json:"txn_keys"`
@@ -8,4 +9,5 @@ type AcceptRequest struct {
 }
 
 type AcceptResponse struct {
+	Deps []Txn `json:"deps"`
 }

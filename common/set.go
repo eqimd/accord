@@ -21,3 +21,13 @@ func (s Set[T]) Union(other Set[T]) {
 		s[t] = struct{}{}
 	}
 }
+
+func SetFromSlice[T comparable](s []T) Set[T] {
+	set := Set[T]{}
+
+	for _, e := range s {
+		set[e] = struct{}{}
+	}
+
+	return set
+}
