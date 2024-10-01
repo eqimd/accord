@@ -93,6 +93,8 @@ func (s *replicaServer) preAccept(w http.ResponseWriter, request *http.Request) 
 	err = json.NewEncoder(w).Encode(resp)
 	if err != nil {
 		// TODO log
+		_, _ = w.Write([]byte(err.Error()))
+		w.WriteHeader(http.StatusInternalServerError)
 	}
 }
 

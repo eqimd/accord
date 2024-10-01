@@ -3,12 +3,21 @@ package message
 import "time"
 
 type Timestamp struct {
+	Epoch       int
 	LocalTime   time.Time
 	LogicalTime int
 	Pid         int
 }
 
 func (ts Timestamp) Less(other Timestamp) bool {
+	if ts.Epoch < other.Epoch {
+		return true
+	}
+
+	if other.Epoch < ts.Epoch {
+		return false
+	}
+
 	if ts.LocalTime.Before(other.LocalTime) {
 		return true
 	}
@@ -33,5 +42,5 @@ func (ts Timestamp) Less(other Timestamp) bool {
 }
 
 func (ts Timestamp) Equal(other Timestamp) bool {
-	return ts.Pid == other.Pid && ts.LogicalTime == other.LogicalTime && ts.LocalTime.Equal(other.LocalTime)
+	return ts.Pid == other.Pid && ts.LogicalTime == other.LogicalTime && ts.LocalTime.Equal(other.LocalTime) && ts.Epoch == other.Epoch
 }
