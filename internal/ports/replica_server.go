@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/eqimd/accord/cluster"
-	"github.com/eqimd/accord/common"
-	"github.com/eqimd/accord/message"
-	"github.com/eqimd/accord/ports/model"
+	"github.com/eqimd/accord/internal/cluster"
+	"github.com/eqimd/accord/internal/common"
+	"github.com/eqimd/accord/internal/message"
+	"github.com/eqimd/accord/internal/ports/model"
 	"github.com/go-chi/chi/v5"
 )
 

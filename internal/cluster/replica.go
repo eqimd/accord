@@ -4,9 +4,9 @@ import (
 	"maps"
 	"sync"
 
-	"github.com/eqimd/accord/common"
-	"github.com/eqimd/accord/message"
-	"github.com/eqimd/accord/storage"
+	"github.com/eqimd/accord/internal/cluster/provider"
+	"github.com/eqimd/accord/internal/common"
+	"github.com/eqimd/accord/internal/message"
 )
 
 type State int
@@ -17,23 +17,13 @@ const (
 	StateStopped
 )
 
-type TxnState int
-
-const (
-	PreAccepted TxnState = iota
-	Accepted
-	Applied
-	Committed
-)
-
 type Replica struct {
 	mu sync.Mutex
 
 	state State
 
 	pid     int
-	env     *Environment
-	storage *storage.Storage
+	storage provider.Storage
 
 	rs *replicaState
 }
@@ -42,7 +32,7 @@ type txnInfo struct {
 	ts0       message.Timestamp
 	ts        message.Timestamp
 	highestTs message.Timestamp
-	state     TxnState
+	state     message.TxnState
 }
 
 type replicaState struct {
@@ -64,14 +54,17 @@ func newReplicaState() *replicaState {
 	}
 }
 
-func NewReplica(pid int, env *Environment) *Replica {
+func NewReplica(pid int, storage provider.Storage) *Replica {
 	return &Replica{
 		state:   StateRunning,
 		pid:     pid,
-		env:     env,
-		storage: storage.NewStorage(),
+		storage: storage,
 		rs:      newReplicaState(),
 	}
+}
+
+func (r *Replica) Pid() int {
+	return r.pid
 }
 
 func (r *Replica) PreAccept(
@@ -103,7 +96,7 @@ func (r *Replica) PreAccept(
 		ts0:       ts0,
 		ts:        proposedTs,
 		highestTs: proposedTs,
-		state:     PreAccepted,
+		state:     message.TxnStatePreAccepted,
 	}
 
 	/*
@@ -138,7 +131,7 @@ func (r *Replica) Accept(
 		r.rs.txnInfo[txn].highestTs = ts
 
 		/*
-			Origin article does not contain this statement
+			Original article does not contain this statement
 
 			Although it is needed because otherwise consensus
 			can deadlock: t_txn can be less than T_txn,
@@ -148,7 +141,7 @@ func (r *Replica) Accept(
 		r.rs.txnInfo[txn].ts = ts
 	}
 
-	r.rs.txnInfo[txn].state = Accepted
+	r.rs.txnInfo[txn].state = message.TxnStateAccepted
 
 	txnDeps := r.getDependencies(txn, keys)
 
@@ -171,7 +164,7 @@ func (r *Replica) Commit(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.rs.txnInfo[txn].state = Committed
+	r.rs.txnInfo[txn].state = message.TxnStateCommitted
 
 	for _, ch := range r.rs.commitsPubSub[txn] {
 		ch <- struct{}{}
@@ -198,11 +191,19 @@ func (r *Replica) Read(
 	r.awaitCommitted(depsCopy)
 	r.awaitApplied(ts, deps.Deps)
 
-	reads := map[string]string{}
+	keysSlice := make([]string, 0, len(keys))
 	for key := range keys {
-		val := r.storage.Get(key)
+		keysSlice = append(keysSlice, key)
+	}
 
-		reads[key] = val
+	vals, err := r.storage.GetBatch(keysSlice)
+	if err != nil {
+		// TODO
+	}
+
+	reads := make(map[string]string, len(keys))
+	for i, k := range keysSlice {
+		reads[k] = vals[i]
 	}
 
 	return reads, nil
@@ -224,11 +225,12 @@ func (r *Replica) Apply(
 	r.awaitCommitted(depsCopy)
 	r.awaitApplied(ts, deps.Deps)
 
-	for k, v := range result {
-		r.storage.Set(k, v)
+	err := r.storage.SetBatch(result)
+	if err != nil {
+		// TODO
 	}
 
-	r.rs.txnInfo[txn].state = Applied
+	r.rs.txnInfo[txn].state = message.TxnStateApplied
 
 	for _, ch := range r.rs.appliesPubSub[txn] {
 		ch <- struct{}{}
@@ -267,7 +269,7 @@ func (r *Replica) awaitCommitted(txns common.Set[message.Transaction]) {
 	for tx := range txns {
 		if info, ok := r.rs.txnInfo[tx]; !ok {
 			continue
-		} else if info.state == Committed || info.state == Applied {
+		} else if info.state == message.TxnStateCommitted || info.state == message.TxnStateApplied {
 			continue
 		}
 
@@ -297,7 +299,7 @@ func (r *Replica) awaitApplied(ts message.Timestamp, txns common.Set[message.Tra
 	for tx := range txns {
 		if info, ok := r.rs.txnInfo[tx]; !ok {
 			continue
-		} else if info.state == Applied {
+		} else if info.state == message.TxnStateApplied {
 			continue
 		}
 

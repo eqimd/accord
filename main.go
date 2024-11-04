@@ -7,7 +7,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eqimd/accord/cluster"
+	"github.com/eqimd/accord/internal/cluster"
+	"github.com/eqimd/accord/internal/common"
+	"github.com/eqimd/accord/internal/environment"
+	"github.com/eqimd/accord/internal/query"
+	"github.com/eqimd/accord/internal/sharding"
+	"github.com/eqimd/accord/internal/storage"
 )
 
 var seededRand *rand.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -30,182 +35,136 @@ func String(length int) string {
 
 func main() {
 	for range 1 {
-		shardsCount := 3
-		replicasPerShard := 3
-		runsCount := 10000
+		runTest()
+	}
+}
 
-		cluster := cluster.NewCluster(shardsCount, replicasPerShard)
+func runTest() {
+	shardsCount := 3
+	replicasPerShard := 3
+	runsCount := 10000
 
-		keys := make([]string, 0, 5)
-		for range cap(keys) {
-			keys = append(keys, String(10))
+	shardIDs := common.Set[int]{}
+	shardToReplicas := map[int]map[int]*cluster.Replica{}
+	replicaToStorage := map[int]*storage.InMemory{}
+
+	repID := 0
+
+	for sh := range shardsCount {
+		shardIDs.Add(sh)
+		shardToReplicas[sh] = map[int]*cluster.Replica{}
+
+		for _ = range replicasPerShard {
+			strg := storage.NewInMemory()
+
+			shardToReplicas[sh][repID] = cluster.NewReplica(repID, strg)
+			replicaToStorage[repID] = strg
+
+			repID++
 		}
+	}
 
-		resCh := make(chan string)
+	environment := environment.NewLocal(shardToReplicas)
+	queryExecutor := query.NewExecutor()
+	hashSharding := sharding.NewHash(shardIDs)
 
-		var wg sync.WaitGroup
+	coordinators := map[int]*cluster.Coordinator{}
+	coordOffset := repID
 
-		for range runsCount {
-			wg.Add(1)
+	for range shardsCount {
+		coordinators[repID] = cluster.NewCoordinator(repID, environment, hashSharding, queryExecutor)
 
-			go func() {
-				defer wg.Done()
+		repID++
+	}
 
-				pos1 := rand.Int() % len(keys)
+	keys := make([]string, 0, 5)
+	for range cap(keys) {
+		keys = append(keys, String(10))
+	}
 
-				key1 := keys[pos1]
+	resCh := make(chan string)
 
-				val1 := String(10)
+	var wg sync.WaitGroup
 
-				q := fmt.Sprintf(`let val1 = SET("%s", "%s"); val1`, key1, val1)
-
-				coordinatorPid := shardsCount*replicasPerShard + (rand.Int() % shardsCount)
-
-				result, err := cluster.Exec(q, coordinatorPid)
-				if err != nil {
-					panic(err)
-				}
-
-				resCh <- result
-			}()
-		}
+	for range runsCount {
+		wg.Add(1)
 
 		go func() {
-			wg.Wait()
+			defer wg.Done()
 
-			close(resCh)
-		}()
+			pos1 := rand.Int() % len(keys)
 
-		for s := range resCh {
-			_ = s
-			// fmt.Println(s)
-		}
+			key1 := keys[pos1]
 
-		time.Sleep(10 * time.Second)
+			val1 := String(10)
 
-		for _, key := range keys {
-			q := fmt.Sprintf("let val = GET(\"%s\"); val", key)
-			res, _ := cluster.Exec(q, shardsCount*replicasPerShard)
+			q := fmt.Sprintf(`let val1 = SET("%s", "%s"); val1`, key1, val1)
 
-			fmt.Println(key, "=", res)
-		}
+			coordinatorPid := coordOffset + (rand.Int() % shardsCount)
 
-		fmt.Println()
-
-		snapshot := cluster.Snapshot()
-
-		for i, snsh := range snapshot {
-			fmt.Println("pid", i)
-			fmt.Println(snsh, "\n")
-		}
-
-		for i := 0; i < shardsCount; i++ {
-			pid1 := i * replicasPerShard
-			snsh := snapshot[pid1]
-
-			for j := i*replicasPerShard + 1; j < (i+1)*replicasPerShard; j++ {
-				if !maps.Equal(snsh, snapshot[j]) {
-					panic(fmt.Sprintf("not equal maps: pid1 = %d, pid2 = %d, map1 = %v, map2 = %v", pid1, j, snsh, snapshot[j]))
-				}
-			}
-		}
-	}
-}
-
-/*
-func main() {
-	shardsCount := 5
-	replicasPerShard := 3
-
-	cluster := cluster.NewCluster(shardsCount, replicasPerShard)
-
-	reader := bufio.NewReader(os.Stdin)
-
-	for {
-		fmt.Print("-> ")
-
-		text, _ := reader.ReadString('\n')
-		text = strings.Replace(text, "\n", "", -1)
-
-		if text == "snapshot" {
-			snapshot := cluster.Snapshot()
-			fmt.Println(snapshot)
-
-			continue
-		}
-
-		splitText := strings.Split(text, " ")
-		if splitText[0] == "exec" {
-			pid, _ := strconv.Atoi(splitText[1])
-			query := strings.Join(splitText[2:], " ")
-
-			result, err := cluster.Exec(query, pid)
+			result, err := coordinators[coordinatorPid].Exec(q)
 			if err != nil {
-				fmt.Println("error:", err.Error())
-				continue
+				panic(err)
 			}
 
-			fmt.Println("result:", result)
+			resCh <- result
+		}()
+	}
+
+	go func() {
+		wg.Wait()
+
+		close(resCh)
+	}()
+
+	for s := range resCh {
+		_ = s
+		// fmt.Println(s)
+	}
+
+	time.Sleep(10 * time.Second)
+
+	for _, key := range keys {
+		q := fmt.Sprintf("let val = GET(\"%s\"); val", key)
+		res, _ := coordinators[coordOffset].Exec(q)
+
+		fmt.Println(key, "=", res)
+	}
+
+	fmt.Println()
+
+	snapshot := map[int]map[string]string{}
+
+	for rPid, strg := range replicaToStorage {
+		snps, _ := strg.Snapshot()
+		snapshot[rPid] = snps
+	}
+
+	for i, snsh := range snapshot {
+		fmt.Println("pid", i)
+		fmt.Println(snsh, "\n")
+	}
+
+	for _, replicas := range shardToReplicas {
+		var pid1 int
+		for rpid := range replicas {
+			pid1 = rpid
+			break
+		}
+
+		snsh := snapshot[pid1]
+
+		for rPid := range replicas {
+			if !maps.Equal(snsh, snapshot[rPid]) {
+				panic(fmt.Sprintf("not equal maps: pid1 = %d, pid2 = %d, map1 = %v, map2 = %v", pid1, rPid, snsh, snapshot[rPid]))
+			}
 		}
 	}
 }
-*/
 
-/*
-func main() {
-	flag.Parse()
-
-	// Create services, ignoring configuration errors.
-	a := New("a", time.Second*3)
-	b := New("b", time.Second*2)
-	c := New("c", time.Second*5)
-	// Start services.
-	ac := a.Start()
-	bc := b.Start()
-	cc := c.Start()
-	// Setup signal handler
-	sigc := make(chan os.Signal, 1)
-	signal.Notify(sigc, syscall.SIGTERM, syscall.SIGINT)
-
-retryLoop:
-	for retries := 2; retries >= 0; retries-- {
-		// Wait for any service to fail, restart them a couple times.
-		select {
-		case err := <-ac:
-			log.Printf("error: %v", err)
-			if retries > 0 {
-				ac = a.Start()
-			}
-		case err := <-bc:
-			log.Printf("error: %v", err)
-			if retries > 0 {
-				bc = b.Start()
-			}
-		case err := <-cc:
-			log.Printf("error: %v", err)
-			if retries > 0 {
-				cc = c.Start()
-			}
-		case sig := <-sigc:
-			log.Printf("got signal %v", sig)
-			break retryLoop
-		}
-		log.Printf("(%v retries remaining)", retries)
-	}
-	log.Printf("shutting down")
-	// Stop all services.
-	a.Stop()
-	b.Stop()
-	c.Stop()
-	// Wait for all services to finish.
-	if err := <-ac; err != nil {
-		log.Printf("a error: %v", err)
-	}
-	if err := <-bc; err != nil {
-		log.Printf("b error: %v", err)
-	}
-	if err := <-cc; err != nil {
-		log.Printf("c error: %v", err)
-	}
-}
-*/
+// func main() {
+// 	if err := cmd.Execute(); err != nil {
+// 		fmt.Println("error:", err.Error())
+// 		os.Exit(1)
+// 	}
+// }

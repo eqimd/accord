@@ -1,43 +1,41 @@
-package cluster
+package environment
 
 import (
-	"github.com/eqimd/accord/common"
-	"github.com/eqimd/accord/message"
+	"github.com/eqimd/accord/internal/cluster"
+	"github.com/eqimd/accord/internal/common"
+	"github.com/eqimd/accord/internal/message"
 )
 
-type Environment struct {
-	Shards           int
-	ReplicasPerShard int
-
-	coordinators map[int]*Coordinator
-	replicas     map[int]*Replica
+type Local struct {
+	shardToReplicas    map[int]map[int]*cluster.Replica
+	replicas           map[int]*cluster.Replica
+	replicaPidsByShard map[int]common.Set[int]
 }
 
-func NewEnvironment(shardsCount int, replicasPerShard int) *Environment {
-	env := &Environment{
-		Shards:           shardsCount,
-		ReplicasPerShard: replicasPerShard,
+func NewLocal(shardToReplicas map[int]map[int]*cluster.Replica) *Local {
+	env := &Local{
+		shardToReplicas: shardToReplicas,
 	}
 
-	replicas := make(map[int]*Replica, shardsCount*replicasPerShard)
-	coordinators := make(map[int]*Coordinator, shardsCount)
+	replicas := make(map[int]*cluster.Replica)
+	replicaPidsByShard := map[int]common.Set[int]{}
 
-	for i := 0; i < shardsCount*replicasPerShard; i++ {
-		replicas[i] = NewReplica(i, env)
-	}
+	for shardID, reps := range shardToReplicas {
+		replicaPidsByShard[shardID] = common.Set[int]{}
 
-	for i := 0; i < shardsCount; i++ {
-		cpid := shardsCount*replicasPerShard + i
-		coordinators[cpid] = NewCoordinator(cpid, env)
+		for rPid, r := range reps {
+			replicas[rPid] = r
+			replicaPidsByShard[shardID].Add(rPid)
+		}
 	}
 
 	env.replicas = replicas
-	env.coordinators = coordinators
+	env.replicaPidsByShard = replicaPidsByShard
 
 	return env
 }
 
-func (e *Environment) PreAccept(
+func (e *Local) PreAccept(
 	from, to int,
 	txn message.Transaction,
 	keys common.Set[string],
@@ -46,7 +44,7 @@ func (e *Environment) PreAccept(
 	return e.replicas[to].PreAccept(from, txn, keys, ts0)
 }
 
-func (e *Environment) Accept(
+func (e *Local) Accept(
 	from, to int,
 	txn message.Transaction,
 	keys common.Set[string],
@@ -56,7 +54,7 @@ func (e *Environment) Accept(
 	return e.replicas[to].Accept(from, txn, keys, ts0, ts)
 }
 
-func (e *Environment) Commit(
+func (e *Local) Commit(
 	from, to int,
 	txn message.Transaction,
 	ts0 message.Timestamp,
@@ -66,7 +64,7 @@ func (e *Environment) Commit(
 	return e.replicas[to].Commit(from, txn, ts0, ts, deps)
 }
 
-func (e *Environment) Read(
+func (e *Local) Read(
 	from, to int,
 	txn message.Transaction,
 	keys common.Set[string],
@@ -76,7 +74,7 @@ func (e *Environment) Read(
 	return e.replicas[to].Read(from, txn, keys, ts, deps)
 }
 
-func (e *Environment) Apply(
+func (e *Local) Apply(
 	from, to int,
 	txn message.Transaction,
 	ts message.Timestamp,
@@ -84,4 +82,8 @@ func (e *Environment) Apply(
 	result map[string]string,
 ) error {
 	return e.replicas[to].Apply(from, txn, ts, deps, result)
+}
+
+func (e *Local) ReplicaPidsByShard(shardID int) common.Set[int] {
+	return e.replicaPidsByShard[shardID]
 }
