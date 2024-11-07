@@ -2,10 +2,8 @@ package model
 
 type CommitRequest struct {
 	Sender      int       `json:"sender"`
-	TxnHash     string    `json:"txn_hash"`
+	Txn         Txn       `json:"txn"`
 	TsProposed  Timestamp `json:"ts_proposed"`
 	TsExecution Timestamp `json:"ts_execution"`
-	Deps        []string  `json:"deps"`
+	Deps        []Txn     `json:"deps"`
 }
-
-type CommitResponse struct{}

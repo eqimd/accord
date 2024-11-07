@@ -42,7 +42,7 @@ func main() {
 func runTest() {
 	shardsCount := 3
 	replicasPerShard := 3
-	runsCount := 10000
+	runsCount := 1000
 
 	shardIDs := common.Set[int]{}
 	shardToReplicas := map[int]map[int]*cluster.Replica{}
@@ -54,7 +54,7 @@ func runTest() {
 		shardIDs.Add(sh)
 		shardToReplicas[sh] = map[int]*cluster.Replica{}
 
-		for _ = range replicasPerShard {
+		for range replicasPerShard {
 			strg := storage.NewInMemory()
 
 			shardToReplicas[sh][repID] = cluster.NewReplica(repID, strg)

@@ -2,7 +2,7 @@ package model
 
 type ReadRequest struct {
 	Sender      int       `json:"sender"`
-	TxnHash     string    `json:"txn_hash"`
+	Txn         Txn       `json:"txn"`
 	TsExecution Timestamp `json:"ts_execution"`
 	TxnKeys     []string  `json:"txn_keys"`
 	Deps        []Txn     `json:"deps"`
