@@ -326,3 +326,7 @@ func (r *Replica) awaitApplied(ts message.Timestamp, txns common.Set[message.Tra
 
 	r.mu.Lock()
 }
+
+func (r *Replica) Snapshot() (map[string]string, error) {
+	return r.storage.Snapshot()
+}

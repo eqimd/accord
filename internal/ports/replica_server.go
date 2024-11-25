@@ -3,6 +3,7 @@ package ports
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 
 	"github.com/eqimd/accord/internal/cluster"
 	"github.com/eqimd/accord/internal/common"
@@ -31,6 +32,9 @@ func (s *replicaServer) newHandler() http.Handler {
 	mux.Post("/read", s.read)
 	mux.Post("/apply", s.apply)
 
+	mux.Get("/pid", s.pid)
+	mux.Get("/snapshot", s.snapshot)
+
 	return mux
 }
 
@@ -39,8 +43,8 @@ func (s *replicaServer) preAccept(w http.ResponseWriter, request *http.Request) 
 
 	err := json.NewDecoder(request.Body).Decode(&preAcceptReq)
 	if err != nil {
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(err.Error()))
 
 		return
 	}
@@ -54,8 +58,8 @@ func (s *replicaServer) preAccept(w http.ResponseWriter, request *http.Request) 
 		msgTs,
 	)
 	if err != nil {
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(err.Error()))
 
 		return
 	}
@@ -65,11 +69,12 @@ func (s *replicaServer) preAccept(w http.ResponseWriter, request *http.Request) 
 		Deps:       model.ModelDepsFromMessage(deps),
 	}
 
+	w.Header().Add("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(resp)
 	if err != nil {
 		// TODO log
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(err.Error()))
 	}
 }
 
@@ -78,8 +83,8 @@ func (s *replicaServer) accept(w http.ResponseWriter, request *http.Request) {
 
 	err := json.NewDecoder(request.Body).Decode(&acceptReq)
 	if err != nil {
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(err.Error()))
 
 		return
 	}
@@ -94,8 +99,8 @@ func (s *replicaServer) accept(w http.ResponseWriter, request *http.Request) {
 		acceptReq.TsExecution.ToMessageTimestamp(),
 	)
 	if err != nil {
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(err.Error()))
 
 		return
 	}
@@ -104,11 +109,12 @@ func (s *replicaServer) accept(w http.ResponseWriter, request *http.Request) {
 		Deps: model.ModelDepsFromMessage(txnDeps),
 	}
 
+	w.Header().Add("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(acceptResp)
 	if err != nil {
 		// TODO log
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(err.Error()))
 	}
 }
 
@@ -116,8 +122,8 @@ func (s *replicaServer) commit(w http.ResponseWriter, request *http.Request) {
 	var commitReq model.CommitRequest
 
 	if err := json.NewDecoder(request.Body).Decode(&commitReq); err != nil {
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(err.Error()))
 
 		return
 	}
@@ -132,8 +138,8 @@ func (s *replicaServer) commit(w http.ResponseWriter, request *http.Request) {
 		model.MessageDepsFromModel(commitReq.Deps),
 	)
 	if err != nil {
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(err.Error()))
 
 		return
 	}
@@ -145,8 +151,8 @@ func (s *replicaServer) read(w http.ResponseWriter, request *http.Request) {
 	var readReq model.ReadRequest
 
 	if err := json.NewDecoder(request.Body).Decode(&readReq); err != nil {
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(err.Error()))
 
 		return
 	}
@@ -159,8 +165,8 @@ func (s *replicaServer) read(w http.ResponseWriter, request *http.Request) {
 		model.MessageDepsFromModel(readReq.Deps),
 	)
 	if err != nil {
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(err.Error()))
 
 		return
 	}
@@ -169,10 +175,11 @@ func (s *replicaServer) read(w http.ResponseWriter, request *http.Request) {
 		Reads: reads,
 	}
 
+	w.Header().Add("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(readResp); err != nil {
 		// TODO log
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(err.Error()))
 	}
 }
 
@@ -180,8 +187,8 @@ func (s *replicaServer) apply(w http.ResponseWriter, request *http.Request) {
 	var applyReq model.ApplyRequest
 
 	if err := json.NewDecoder(request.Body).Decode(&applyReq); err != nil {
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(err.Error()))
 
 		return
 	}
@@ -194,11 +201,38 @@ func (s *replicaServer) apply(w http.ResponseWriter, request *http.Request) {
 		applyReq.Result,
 	)
 	if err != nil {
-		_, _ = w.Write([]byte(err.Error()))
 		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(err.Error()))
 
 		return
 	}
+}
 
-	w.WriteHeader(http.StatusOK)
+func (s *replicaServer) pid(w http.ResponseWriter, request *http.Request) {
+	resp := &model.PidResponse{
+		Pid: os.Getpid(),
+	}
+
+	w.Header().Add("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(err.Error()))
+
+		return
+	}
+}
+
+func (s *replicaServer) snapshot(w http.ResponseWriter, request *http.Request) {
+	// TODO
+	snapshot, _ := s.replica.Snapshot()
+
+	resp := &model.SnapshotResponse{
+		Values: snapshot,
+	}
+
+	w.Header().Add("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(err.Error()))
+	}
 }
