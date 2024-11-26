@@ -1,19 +1,17 @@
 package message
 
-import "time"
-
 type Timestamp struct {
-	LocalTime   time.Time
+	LocalTime   uint64
 	LogicalTime int
 	Pid         int
 }
 
 func (ts Timestamp) Less(other Timestamp) bool {
-	if ts.LocalTime.Before(other.LocalTime) {
+	if ts.LocalTime < other.LocalTime {
 		return true
 	}
 
-	if other.LocalTime.Before(ts.LocalTime) {
+	if other.LocalTime < ts.LocalTime {
 		return false
 	}
 
@@ -33,5 +31,5 @@ func (ts Timestamp) Less(other Timestamp) bool {
 }
 
 func (ts Timestamp) Equal(other Timestamp) bool {
-	return ts.Pid == other.Pid && ts.LogicalTime == other.LogicalTime && ts.LocalTime.Equal(other.LocalTime)
+	return ts.Pid == other.Pid && ts.LogicalTime == other.LogicalTime && ts.LocalTime == other.LocalTime
 }

@@ -4,18 +4,30 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
-	"time"
+	"sync/atomic"
 
 	"github.com/eqimd/accord/internal/cluster/provider"
 	"github.com/eqimd/accord/internal/common"
 	"github.com/eqimd/accord/internal/message"
 )
 
+type monoClock struct {
+	val atomic.Uint64
+}
+
+func (c *monoClock) getTime() uint64 {
+	v := c.val.Add(1)
+
+	return v
+}
+
 type Coordinator struct {
 	pid           int
 	env           provider.Environment
 	sharding      provider.Sharding
 	queryExecutor provider.QueryExecutor
+
+	clock monoClock
 }
 
 func NewCoordinator(
@@ -34,7 +46,7 @@ func NewCoordinator(
 
 func (c *Coordinator) Exec(query string) (string, error) {
 	ts0 := message.Timestamp{
-		LocalTime:   time.Now(),
+		LocalTime:   c.clock.getTime(),
 		LogicalTime: 0,
 		Pid:         c.pid,
 	}

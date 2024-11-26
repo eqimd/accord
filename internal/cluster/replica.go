@@ -103,13 +103,6 @@ func (r *Replica) PreAccept(
 		}
 	}
 
-	/*
-		No need to filter txDeps on condition ts0_g < proposedTs
-		because proposedTs is already greater than any other ts0_g
-
-		This follows from ts0_g <= T_g <= max(T_g | g ~ txn) < proposedTs
-	*/
-
 	for _, key := range keys {
 		if _, ok := r.rs.keyToTxns[key]; !ok {
 			r.rs.keyToTxns[key] = make(common.Set[message.Transaction])
@@ -133,18 +126,18 @@ func (r *Replica) Accept(
 
 	txnInfo := r.rs.txnInfo[txn]
 
-	/*
-		Original article does not contain this statement
-
-		Although it is needed because otherwise consensus
-		can deadlock: t_txn can be less than T_txn,
-		but when processing Apply(...) we should await
-		all dependencies with lower t to be applied
-	*/
-	txnInfo.ts = ts
-
 	if txnInfo.highestTs.Less(ts) {
 		txnInfo.highestTs = ts
+
+		/*
+			Original article does not contain this statement
+
+			Although it is needed because otherwise consensus
+			can deadlock: t_txn can be less than T_txn,
+			but when processing Apply(...) we should await
+			all dependencies with lower t to be applied
+		*/
+		// txnInfo.ts = ts
 	}
 
 	txnInfo.state = message.TxnStateAccepted
