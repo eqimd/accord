@@ -11,7 +11,7 @@ import (
 
 type exprVisitor struct {
 	prev string
-	keys []string
+	keys common.Set[string]
 }
 
 func (v *exprVisitor) Visit(node *ast.Node) {
@@ -20,7 +20,7 @@ func (v *exprVisitor) Visit(node *ast.Node) {
 	if v.prev == "GET" || v.prev == "SET" {
 		cur = strings.Trim(cur, "\"")
 
-		v.keys = append(v.keys, cur)
+		v.keys.Add(cur)
 	}
 
 	v.prev = cur
@@ -32,21 +32,17 @@ func NewExecutor() *Executor {
 	return &Executor{}
 }
 
-func (e *Executor) QueryKeys(query string) (common.Set[string], error) {
-	keys := common.Set[string]{}
-
-	visitor := &exprVisitor{}
+func (e *Executor) QueryKeys(query string) ([]string, error) {
+	visitor := &exprVisitor{
+		keys: make(common.Set[string]),
+	}
 
 	_, err := expr.Compile(query, expr.Patch(visitor))
 	if err != nil {
 		return nil, fmt.Errorf("query compile error: %w", err)
 	}
 
-	for _, s := range visitor.keys {
-		keys.Add(s)
-	}
-
-	return keys, nil
+	return visitor.keys.Slice(), nil
 }
 
 func (e *Executor) Execute(query string, reads map[string]string) (string, map[string]string, error) {

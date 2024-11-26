@@ -28,7 +28,7 @@ func NewHTTP(shardToReplicas map[int][]int, replicaToAddr map[int]string) *HTTPE
 func (e *HTTPEnv) PreAccept(
 	from, to int,
 	txn message.Transaction,
-	keys common.Set[string],
+	keys []string,
 	ts0 message.Timestamp,
 ) (message.Timestamp, message.TxnDependencies, error) {
 	preAcceptReq := &model.PreAcceptRequest{
@@ -38,7 +38,7 @@ func (e *HTTPEnv) PreAccept(
 			Ts:   model.FromMessageTimestamp(txn.Timestamp),
 		},
 		TsProposed: model.FromMessageTimestamp(ts0),
-		TxnKeys:    keys.Slice(),
+		TxnKeys:    keys,
 	}
 
 	client := resty.New()
@@ -62,7 +62,7 @@ func (e *HTTPEnv) PreAccept(
 func (e *HTTPEnv) Accept(
 	from, to int,
 	txn message.Transaction,
-	keys common.Set[string],
+	keys []string,
 	ts0 message.Timestamp,
 	ts message.Timestamp,
 ) (message.TxnDependencies, error) {
@@ -73,7 +73,7 @@ func (e *HTTPEnv) Accept(
 			Ts:   model.FromMessageTimestamp(txn.Timestamp),
 		},
 		TsProposed:  model.FromMessageTimestamp(ts0),
-		TxnKeys:     keys.Slice(),
+		TxnKeys:     keys,
 		TsExecution: model.FromMessageTimestamp(ts),
 	}
 
@@ -132,7 +132,7 @@ func (e *HTTPEnv) Commit(
 func (e *HTTPEnv) Read(
 	from, to int,
 	txn message.Transaction,
-	keys common.Set[string],
+	keys []string,
 	ts message.Timestamp,
 	deps message.TxnDependencies,
 ) (map[string]string, error) {
@@ -143,7 +143,7 @@ func (e *HTTPEnv) Read(
 			Ts:   model.FromMessageTimestamp(txn.Timestamp),
 		},
 		TsExecution: model.FromMessageTimestamp(ts),
-		TxnKeys:     keys.Slice(),
+		TxnKeys:     keys,
 		Deps:        model.ModelDepsFromMessage(deps),
 	}
 

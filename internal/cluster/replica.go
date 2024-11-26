@@ -1,7 +1,6 @@
 package cluster
 
 import (
-	"maps"
 	"sync"
 
 	"github.com/eqimd/accord/internal/cluster/provider"
@@ -29,10 +28,13 @@ type Replica struct {
 }
 
 type txnInfo struct {
-	ts0       message.Timestamp
-	ts        message.Timestamp
-	highestTs message.Timestamp
-	state     message.TxnState
+	ts0           message.Timestamp
+	ts            message.Timestamp
+	highestTs     message.Timestamp
+	state         message.TxnState
+	keys          []string
+	commitsPubSub []chan struct{}
+	appliesPubSub []chan struct{}
 }
 
 type replicaState struct {
@@ -40,17 +42,12 @@ type replicaState struct {
 	keyToTxns map[string]common.Set[message.Transaction]
 
 	txnInfo map[message.Transaction]*txnInfo
-
-	commitsPubSub map[message.Transaction][]chan struct{}
-	appliesPubSub map[message.Transaction][]chan struct{}
 }
 
 func newReplicaState() *replicaState {
 	return &replicaState{
-		keyToTxns:     make(map[string]common.Set[message.Transaction]),
-		txnInfo:       make(map[message.Transaction]*txnInfo),
-		commitsPubSub: make(map[message.Transaction][]chan struct{}),
-		appliesPubSub: make(map[message.Transaction][]chan struct{}),
+		keyToTxns: make(map[string]common.Set[message.Transaction]),
+		txnInfo:   make(map[message.Transaction]*txnInfo),
 	}
 }
 
@@ -70,7 +67,7 @@ func (r *Replica) Pid() int {
 func (r *Replica) PreAccept(
 	sender int,
 	txn message.Transaction,
-	keys common.Set[string],
+	keys []string,
 	ts0 message.Timestamp,
 ) (message.Timestamp, message.TxnDependencies, error) {
 	r.mu.Lock()
@@ -97,6 +94,13 @@ func (r *Replica) PreAccept(
 		ts:        proposedTs,
 		highestTs: proposedTs,
 		state:     message.TxnStatePreAccepted,
+		keys:      keys,
+	}
+
+	for tx := range txDeps.Deps {
+		if !(r.rs.txnInfo[tx].ts0.Less(ts0)) {
+			delete(txDeps.Deps, tx)
+		}
 	}
 
 	/*
@@ -106,7 +110,7 @@ func (r *Replica) PreAccept(
 		This follows from ts0_g <= T_g <= max(T_g | g ~ txn) < proposedTs
 	*/
 
-	for key := range keys {
+	for _, key := range keys {
 		if _, ok := r.rs.keyToTxns[key]; !ok {
 			r.rs.keyToTxns[key] = make(common.Set[message.Transaction])
 		}
@@ -120,33 +124,35 @@ func (r *Replica) PreAccept(
 func (r *Replica) Accept(
 	sender int,
 	txn message.Transaction,
-	keys common.Set[string],
+	keys []string,
 	ts0 message.Timestamp,
 	ts message.Timestamp,
 ) (message.TxnDependencies, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.rs.txnInfo[txn].highestTs.Less(ts) {
-		r.rs.txnInfo[txn].highestTs = ts
+	txnInfo := r.rs.txnInfo[txn]
 
-		/*
-			Original article does not contain this statement
+	/*
+		Original article does not contain this statement
 
-			Although it is needed because otherwise consensus
-			can deadlock: t_txn can be less than T_txn,
-			but when processing Apply(...) we should await
-			all dependencies with lower t to be applied
-		*/
-		r.rs.txnInfo[txn].ts = ts
+		Although it is needed because otherwise consensus
+		can deadlock: t_txn can be less than T_txn,
+		but when processing Apply(...) we should await
+		all dependencies with lower t to be applied
+	*/
+	txnInfo.ts = ts
+
+	if txnInfo.highestTs.Less(ts) {
+		txnInfo.highestTs = ts
 	}
 
-	r.rs.txnInfo[txn].state = message.TxnStateAccepted
+	txnInfo.state = message.TxnStateAccepted
 
 	txnDeps := r.getDependencies(txn, keys)
 
 	for tx := range txnDeps.Deps {
-		if !(r.rs.txnInfo[tx].ts0.Less(ts)) {
+		if !(r.rs.txnInfo[tx].ts0.Less(txnInfo.ts)) {
 			txnDeps.Deps.Remove(tx)
 		}
 	}
@@ -164,13 +170,15 @@ func (r *Replica) Commit(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.rs.txnInfo[txn].state = message.TxnStateCommitted
+	txnInfo := r.rs.txnInfo[txn]
 
-	for _, ch := range r.rs.commitsPubSub[txn] {
+	txnInfo.state = message.TxnStateCommitted
+
+	for _, ch := range txnInfo.commitsPubSub {
 		ch <- struct{}{}
 	}
 
-	r.rs.commitsPubSub[txn] = nil
+	txnInfo.commitsPubSub = nil
 
 	return nil
 }
@@ -178,31 +186,23 @@ func (r *Replica) Commit(
 func (r *Replica) Read(
 	sender int,
 	txn message.Transaction,
-	keys common.Set[string],
+	keys []string,
 	ts message.Timestamp,
 	deps message.TxnDependencies,
 ) (map[string]string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	depsCopy := maps.Clone(deps.Deps)
-	depsCopy.Add(txn)
-
-	r.awaitCommitted(depsCopy)
+	r.awaitCommitted(txn, deps.Deps)
 	r.awaitApplied(ts, deps.Deps)
 
-	keysSlice := make([]string, 0, len(keys))
-	for key := range keys {
-		keysSlice = append(keysSlice, key)
-	}
-
-	vals, err := r.storage.GetBatch(keysSlice)
+	vals, err := r.storage.GetBatch(keys)
 	if err != nil {
 		// TODO
 	}
 
 	reads := make(map[string]string, len(keys))
-	for i, k := range keysSlice {
+	for i, k := range keys {
 		reads[k] = vals[i]
 	}
 
@@ -219,10 +219,7 @@ func (r *Replica) Apply(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	depsCopy := maps.Clone(deps.Deps)
-	depsCopy.Add(txn)
-
-	r.awaitCommitted(depsCopy)
+	r.awaitCommitted(txn, deps.Deps)
 	r.awaitApplied(ts, deps.Deps)
 
 	err := r.storage.SetBatch(result)
@@ -230,32 +227,36 @@ func (r *Replica) Apply(
 		// TODO
 	}
 
-	r.rs.txnInfo[txn].state = message.TxnStateApplied
+	txnInfo := r.rs.txnInfo[txn]
 
-	for _, ch := range r.rs.appliesPubSub[txn] {
+	txnInfo.state = message.TxnStateApplied
+
+	for _, ch := range txnInfo.appliesPubSub {
 		ch <- struct{}{}
 	}
 
-	r.rs.appliesPubSub[txn] = nil
+	txnInfo.appliesPubSub = nil
 
-	// TODO finally remove txn
+	for _, k := range txnInfo.keys {
+		delete(r.rs.keyToTxns[k], txn)
+	}
+
+	delete(r.rs.txnInfo, txn)
 
 	return nil
 }
 
 func (r *Replica) getDependencies(
 	txn message.Transaction,
-	keys common.Set[string],
+	keys []string,
 ) message.TxnDependencies {
 	deps := common.Set[message.Transaction]{}
 
-	for key := range keys {
+	for _, key := range keys {
 		txs := r.rs.keyToTxns[key]
-		for tx := range txs {
-			if tx != txn {
-				deps.Add(tx)
-			}
-		}
+
+		deps.Union(txs)
+		delete(deps, txn)
 	}
 
 	return message.TxnDependencies{
@@ -263,27 +264,36 @@ func (r *Replica) getDependencies(
 	}
 }
 
-func (r *Replica) awaitCommitted(txns common.Set[message.Transaction]) {
+func (r *Replica) awaitCommitted(origTxn message.Transaction, txns common.Set[message.Transaction]) {
 	var wg sync.WaitGroup
 
-	for tx := range txns {
-		if info, ok := r.rs.txnInfo[tx]; !ok {
-			continue
-		} else if info.state == message.TxnStateCommitted || info.state == message.TxnStateApplied {
-			continue
+	processTxnFunc := func(tx message.Transaction) {
+		info, ok := r.rs.txnInfo[tx]
+		if !ok {
+			return
+		}
+
+		if info.state == message.TxnStateCommitted || info.state == message.TxnStateApplied {
+			return
 		}
 
 		wg.Add(1)
 
 		waitCh := make(chan struct{})
 
-		r.rs.commitsPubSub[tx] = append(r.rs.commitsPubSub[tx], waitCh)
+		info.commitsPubSub = append(info.commitsPubSub, waitCh)
 
 		go func(tx message.Transaction) {
 			<-waitCh
 
 			wg.Done()
 		}(tx)
+	}
+
+	processTxnFunc(origTxn)
+
+	for tx := range txns {
+		processTxnFunc(tx)
 	}
 
 	r.mu.Unlock()
@@ -297,13 +307,16 @@ func (r *Replica) awaitApplied(ts message.Timestamp, txns common.Set[message.Tra
 	var wg sync.WaitGroup
 
 	for tx := range txns {
-		if info, ok := r.rs.txnInfo[tx]; !ok {
-			continue
-		} else if info.state == message.TxnStateApplied {
+		info, ok := r.rs.txnInfo[tx]
+		if !ok {
 			continue
 		}
 
-		if !(r.rs.txnInfo[tx].ts.Less(ts)) {
+		if info.state == message.TxnStateApplied {
+			continue
+		}
+
+		if !(info.ts.Less(ts)) {
 			continue
 		}
 
@@ -311,7 +324,7 @@ func (r *Replica) awaitApplied(ts message.Timestamp, txns common.Set[message.Tra
 
 		waitCh := make(chan struct{})
 
-		r.rs.appliesPubSub[tx] = append(r.rs.appliesPubSub[tx], waitCh)
+		info.appliesPubSub = append(info.appliesPubSub, waitCh)
 
 		go func(tx message.Transaction) {
 			<-waitCh

@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -40,6 +41,7 @@ func (c *Coordinator) Exec(query string) (string, error) {
 
 	keys, err := c.queryExecutor.QueryKeys(query)
 	if err != nil {
+		slog.Error("keys error")
 		// TODO
 	}
 
@@ -76,6 +78,7 @@ func (c *Coordinator) Exec(query string) (string, error) {
 
 				propTs, rDeps, err := c.env.PreAccept(c.pid, rpid, txn, keys, ts0)
 				if err != nil {
+					slog.Error("preaccept error", slog.Any("error", err))
 					// TODO
 				}
 
@@ -138,8 +141,9 @@ func (c *Coordinator) Exec(query string) (string, error) {
 				go func(shardID, rpid int) {
 					defer shardWg.Done()
 
-					tDeps, err := c.env.Accept(c.pid, rpid, txn, keys, ts0, proposedMax)
+					tDeps, err := c.env.Accept(c.pid, rpid, txn, keys, ts0, tsCommit)
 					if err != nil {
+						slog.Error("accept error", slog.Any("error", err))
 						// TODO
 					}
 
@@ -173,6 +177,7 @@ func (c *Coordinator) Exec(query string) (string, error) {
 			go func(rpid int) {
 				err := c.env.Commit(c.pid, rpid, txn, ts0, tsCommit, deps)
 				if err != nil {
+					slog.Error("commit error", slog.Any("error", err))
 					// TODO
 				}
 			}(replicaPid)
@@ -211,6 +216,7 @@ func (c *Coordinator) Exec(query string) (string, error) {
 				shardDeps,
 			)
 			if err != nil {
+				slog.Error("read error", slog.Any("error", err))
 				// TODO
 			}
 			mu.Lock()
@@ -241,6 +247,7 @@ func (c *Coordinator) Exec(query string) (string, error) {
 
 				err := c.env.Apply(c.pid, rpid, txn, tsCommit, d, writes)
 				if err != nil {
+					slog.Error("apply error", slog.Any("error", err))
 					// TODO
 				}
 			}(shardID, replicaPid)

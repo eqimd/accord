@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/eqimd/accord/internal/cluster"
-	"github.com/eqimd/accord/internal/common"
 	"github.com/eqimd/accord/internal/ports/model"
 	"github.com/go-chi/chi/v5"
 )
@@ -54,7 +53,7 @@ func (s *replicaServer) preAccept(w http.ResponseWriter, request *http.Request) 
 	tsProp, deps, err := s.replica.PreAccept(
 		preAcceptReq.Sender,
 		preAcceptReq.Txn.ToMessageTxn(),
-		common.SetFromSlice(preAcceptReq.TxnKeys),
+		preAcceptReq.TxnKeys,
 		msgTs,
 	)
 	if err != nil {
@@ -94,7 +93,7 @@ func (s *replicaServer) accept(w http.ResponseWriter, request *http.Request) {
 	txnDeps, err := s.replica.Accept(
 		acceptReq.Sender,
 		acceptReq.Txn.ToMessageTxn(),
-		common.SetFromSlice(acceptReq.TxnKeys),
+		acceptReq.TxnKeys,
 		ts0,
 		acceptReq.TsExecution.ToMessageTimestamp(),
 	)
@@ -160,7 +159,7 @@ func (s *replicaServer) read(w http.ResponseWriter, request *http.Request) {
 	reads, err := s.replica.Read(
 		readReq.Sender,
 		readReq.Txn.ToMessageTxn(),
-		common.SetFromSlice(readReq.TxnKeys),
+		readReq.TxnKeys,
 		readReq.TsExecution.ToMessageTimestamp(),
 		model.MessageDepsFromModel(readReq.Deps),
 	)

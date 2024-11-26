@@ -9,14 +9,14 @@ type Environment interface {
 	PreAccept(
 		from, to int,
 		txn message.Transaction,
-		keys common.Set[string],
+		keys []string,
 		ts0 message.Timestamp,
 	) (message.Timestamp, message.TxnDependencies, error)
 
 	Accept(
 		from, to int,
 		txn message.Transaction,
-		keys common.Set[string],
+		keys []string,
 		ts0 message.Timestamp,
 		ts message.Timestamp,
 	) (message.TxnDependencies, error)
@@ -32,7 +32,7 @@ type Environment interface {
 	Read(
 		from, to int,
 		txn message.Transaction,
-		keys common.Set[string],
+		keys []string,
 		ts message.Timestamp,
 		deps message.TxnDependencies,
 	) (map[string]string, error)

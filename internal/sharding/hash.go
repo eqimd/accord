@@ -27,19 +27,15 @@ func NewHash(shards common.Set[int]) *Hash {
 }
 
 // returns mapping of (shard id) -> (set of keys for this shard)
-func (h *Hash) ShardToKeys(keys common.Set[string]) map[int]common.Set[string] {
-	shardToKeys := map[int]common.Set[string]{}
+func (h *Hash) ShardToKeys(keys []string) map[int][]string {
+	shardToKeys := map[int][]string{}
 
-	for key := range keys {
+	for _, key := range keys {
 		virtID := h.getVirtualShardByKey(key)
 
 		shardID := h.virtualShards[virtID]
 
-		if _, ok := shardToKeys[shardID]; !ok {
-			shardToKeys[shardID] = make(common.Set[string])
-		}
-
-		shardToKeys[shardID].Add(key)
+		shardToKeys[shardID] = append(shardToKeys[shardID], key)
 	}
 
 	return shardToKeys

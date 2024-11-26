@@ -38,7 +38,7 @@ func NewLocal(shardToReplicas map[int]map[int]*cluster.Replica) *Local {
 func (e *Local) PreAccept(
 	from, to int,
 	txn message.Transaction,
-	keys common.Set[string],
+	keys []string,
 	ts0 message.Timestamp,
 ) (message.Timestamp, message.TxnDependencies, error) {
 	return e.replicas[to].PreAccept(from, txn, keys, ts0)
@@ -47,7 +47,7 @@ func (e *Local) PreAccept(
 func (e *Local) Accept(
 	from, to int,
 	txn message.Transaction,
-	keys common.Set[string],
+	keys []string,
 	ts0 message.Timestamp,
 	ts message.Timestamp,
 ) (message.TxnDependencies, error) {
@@ -67,7 +67,7 @@ func (e *Local) Commit(
 func (e *Local) Read(
 	from, to int,
 	txn message.Transaction,
-	keys common.Set[string],
+	keys []string,
 	ts message.Timestamp,
 	deps message.TxnDependencies,
 ) (map[string]string, error) {
