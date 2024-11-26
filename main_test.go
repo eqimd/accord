@@ -40,13 +40,13 @@ func RandomString(length int) string {
 func runTest() {
 	coordinators := []string{
 		"http://localhost:5000",
-		// "http://localhost:6000",
-		// "http://localhost:7000",
+		"http://localhost:6000",
+		"http://localhost:7000",
 	}
 
-	runsCount := 1000
+	runsCount := 10000
 
-	keys := make([]string, 0, 10)
+	keys := make([]string, 0, 100)
 	for range cap(keys) {
 		keys = append(keys, RandomString(10))
 	}
@@ -145,126 +145,124 @@ func TestMain(t *testing.T) {
 }
 
 func TestLocal(t *testing.T) {
-	for {
-		shardsCount := 1
-		replicasPerShard := 2
-		runsCount := 2
+	shardsCount := 1
+	replicasPerShard := 3
+	runsCount := 5000
 
-		shardIDs := common.Set[int]{}
-		shardToReplicas := map[int]map[int]*cluster.Replica{}
-		replicaToStorage := map[int]*storage.InMemory{}
+	shardIDs := common.Set[int]{}
+	shardToReplicas := map[int]map[int]*cluster.Replica{}
+	replicaToStorage := map[int]*storage.InMemory{}
 
-		repID := 0
+	repID := 0
 
-		for sh := range shardsCount {
-			shardIDs.Add(sh)
-			shardToReplicas[sh] = map[int]*cluster.Replica{}
+	for sh := range shardsCount {
+		shardIDs.Add(sh)
+		shardToReplicas[sh] = map[int]*cluster.Replica{}
 
-			for range replicasPerShard {
-				strg := storage.NewInMemory()
+		for range replicasPerShard {
+			strg := storage.NewInMemory()
 
-				shardToReplicas[sh][repID] = cluster.NewReplica(repID, strg)
-				replicaToStorage[repID] = strg
-
-				repID++
-			}
-		}
-
-		environment := environment.NewLocal(shardToReplicas)
-		queryExecutor := query.NewExecutor()
-		hashSharding := sharding.NewHash(shardIDs)
-
-		coordinators := map[int]*cluster.Coordinator{}
-		coordOffset := repID
-
-		for range shardsCount {
-			coordinators[repID] = cluster.NewCoordinator(repID, environment, hashSharding, queryExecutor)
+			shardToReplicas[sh][repID] = cluster.NewReplica(repID, strg)
+			replicaToStorage[repID] = strg
 
 			repID++
 		}
+	}
 
-		keys := make([]string, 0, 1)
-		for range cap(keys) {
-			keys = append(keys, RandomString(10))
-		}
+	environment := environment.NewLocal(shardToReplicas)
+	queryExecutor := query.NewExecutor()
+	hashSharding := sharding.NewHash(shardIDs)
 
-		resCh := make(chan string)
+	coordinators := map[int]*cluster.Coordinator{}
+	coordOffset := repID
 
-		var wg sync.WaitGroup
+	for range shardsCount {
+		coordinators[repID] = cluster.NewCoordinator(repID, environment, hashSharding, queryExecutor)
 
-		for range runsCount {
-			wg.Add(1)
+		repID++
+	}
 
-			go func() {
-				defer wg.Done()
+	keys := make([]string, 0, 100)
+	for range cap(keys) {
+		keys = append(keys, RandomString(10))
+	}
 
-				pos1 := rand.Int() % len(keys)
+	resCh := make(chan string)
 
-				key1 := keys[pos1]
+	var wg sync.WaitGroup
 
-				val1 := RandomString(10)
-
-				q := fmt.Sprintf(`let val1 = SET("%s", "%s"); val1`, key1, val1)
-
-				coordinatorPid := coordOffset + (rand.Int() % shardsCount)
-
-				result, err := coordinators[coordinatorPid].Exec(q)
-				if err != nil {
-					panic(err)
-				}
-
-				resCh <- result
-			}()
-		}
+	for range runsCount {
+		wg.Add(1)
 
 		go func() {
-			wg.Wait()
+			defer wg.Done()
 
-			close(resCh)
-		}()
+			pos1 := rand.Int() % len(keys)
 
-		for s := range resCh {
-			_ = s
-			// fmt.Println(s)
-		}
+			key1 := keys[pos1]
 
-		time.Sleep(50 * time.Millisecond)
+			val1 := RandomString(10)
 
-		for _, key := range keys {
-			q := fmt.Sprintf("let val = GET(\"%s\"); val", key)
-			res, _ := coordinators[coordOffset].Exec(q)
+			q := fmt.Sprintf(`let val1 = SET("%s", "%s"); val1`, key1, val1)
 
-			fmt.Println(key, "=", res)
-		}
+			coordinatorPid := coordOffset + (rand.Int() % shardsCount)
 
-		fmt.Println()
-
-		snapshot := map[int]map[string]string{}
-
-		for rPid, strg := range replicaToStorage {
-			snps, _ := strg.Snapshot()
-			snapshot[rPid] = snps
-		}
-
-		for i, snsh := range snapshot {
-			fmt.Println("pid", i)
-			fmt.Println(snsh)
-			fmt.Println()
-		}
-
-		for _, replicas := range shardToReplicas {
-			var pid1 int
-			for rpid := range replicas {
-				pid1 = rpid
-				break
+			result, err := coordinators[coordinatorPid].Exec(q)
+			if err != nil {
+				panic(err)
 			}
 
-			snsh := snapshot[pid1]
+			resCh <- result
+		}()
+	}
 
-			for rPid := range replicas {
-				if !maps.Equal(snsh, snapshot[rPid]) {
-					panic(fmt.Sprintf("not equal maps: pid1 = %d, pid2 = %d, map1 = %v, map2 = %v", pid1, rPid, snsh, snapshot[rPid]))
-				}
+	go func() {
+		wg.Wait()
+
+		close(resCh)
+	}()
+
+	for s := range resCh {
+		_ = s
+		// fmt.Println(s)
+	}
+
+	time.Sleep(10 * time.Second)
+
+	for _, key := range keys {
+		q := fmt.Sprintf("let val = GET(\"%s\"); val", key)
+		res, _ := coordinators[coordOffset].Exec(q)
+
+		fmt.Println(key, "=", res)
+	}
+
+	fmt.Println()
+
+	snapshot := map[int]map[string]string{}
+
+	for rPid, strg := range replicaToStorage {
+		snps, _ := strg.Snapshot()
+		snapshot[rPid] = snps
+	}
+
+	for i, snsh := range snapshot {
+		fmt.Println("pid", i)
+		fmt.Println(snsh)
+		fmt.Println()
+	}
+
+	for _, replicas := range shardToReplicas {
+		var pid1 int
+		for rpid := range replicas {
+			pid1 = rpid
+			break
+		}
+
+		snsh := snapshot[pid1]
+
+		for rPid := range replicas {
+			if !maps.Equal(snsh, snapshot[rPid]) {
+				panic(fmt.Sprintf("not equal maps: pid1 = %d, pid2 = %d, map1 = %v, map2 = %v", pid1, rPid, snsh, snapshot[rPid]))
 			}
 		}
 	}

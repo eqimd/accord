@@ -77,15 +77,21 @@ func (r *Replica) PreAccept(
 
 	txDeps := r.getDependencies(txn, keys)
 
+	maxHighest := ts0
+
 	for depTx := range txDeps.Deps {
 		info := r.rs.txnInfo[depTx]
 
-		if proposedTs.Less(info.highestTs) {
-			proposedTs = message.Timestamp{
-				LocalTime:   info.highestTs.LocalTime,
-				LogicalTime: info.highestTs.LogicalTime + 1,
-				Pid:         r.pid,
-			}
+		if maxHighest.Less(info.highestTs) {
+			maxHighest = info.highestTs
+		}
+	}
+
+	if maxHighest != ts0 {
+		proposedTs = message.Timestamp{
+			LocalTime:   maxHighest.LocalTime,
+			LogicalTime: maxHighest.LogicalTime + 1,
+			Pid:         r.pid,
 		}
 	}
 
@@ -137,7 +143,7 @@ func (r *Replica) Accept(
 			but when processing Apply(...) we should await
 			all dependencies with lower t to be applied
 		*/
-		// txnInfo.ts = ts
+		txnInfo.ts = ts
 	}
 
 	txnInfo.state = message.TxnStateAccepted
@@ -249,8 +255,9 @@ func (r *Replica) getDependencies(
 		txs := r.rs.keyToTxns[key]
 
 		deps.Union(txs)
-		delete(deps, txn)
 	}
+
+	delete(deps, txn)
 
 	return message.TxnDependencies{
 		Deps: deps,
