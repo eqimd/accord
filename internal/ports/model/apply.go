@@ -7,5 +7,3 @@ type ApplyRequest struct {
 	Deps        []Txn             `json:"deps"`
 	Result      map[string]string `json:"result"`
 }
-
-type ApplyResponse struct{}

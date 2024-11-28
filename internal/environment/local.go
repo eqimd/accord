@@ -48,20 +48,16 @@ func (e *Local) Accept(
 	from, to int,
 	txn message.Transaction,
 	keys []string,
-	ts0 message.Timestamp,
 	ts message.Timestamp,
 ) (message.TxnDependencies, error) {
-	return e.replicas[to].Accept(from, txn, keys, ts0, ts)
+	return e.replicas[to].Accept(from, txn, keys, ts)
 }
 
 func (e *Local) Commit(
 	from, to int,
 	txn message.Transaction,
-	ts0 message.Timestamp,
-	ts message.Timestamp,
-	deps message.TxnDependencies,
 ) error {
-	return e.replicas[to].Commit(from, txn, ts0, ts, deps)
+	return e.replicas[to].Commit(from, txn)
 }
 
 func (e *Local) Read(

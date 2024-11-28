@@ -17,16 +17,12 @@ type Environment interface {
 		from, to int,
 		txn message.Transaction,
 		keys []string,
-		ts0 message.Timestamp,
 		ts message.Timestamp,
 	) (message.TxnDependencies, error)
 
 	Commit(
 		from, to int,
 		txn message.Transaction,
-		ts0 message.Timestamp,
-		ts message.Timestamp,
-		deps message.TxnDependencies,
 	) error
 
 	Read(

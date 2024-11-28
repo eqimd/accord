@@ -79,7 +79,7 @@ func (r *Replica) PreAccept(
 
 	maxHighest := ts0
 
-	for depTx := range txDeps.Deps {
+	for depTx := range txDeps {
 		info := r.rs.txnInfo[depTx]
 
 		if maxHighest.Less(info.highestTs) {
@@ -103,9 +103,9 @@ func (r *Replica) PreAccept(
 		keys:      keys,
 	}
 
-	for tx := range txDeps.Deps {
+	for tx := range txDeps {
 		if !(r.rs.txnInfo[tx].ts0.Less(ts0)) {
-			delete(txDeps.Deps, tx)
+			delete(txDeps, tx)
 		}
 	}
 
@@ -117,14 +117,13 @@ func (r *Replica) PreAccept(
 		r.rs.keyToTxns[key].Add(txn)
 	}
 
-	return proposedTs, txDeps, nil
+	return proposedTs, message.TxnDependencies{Deps: txDeps.Slice()}, nil
 }
 
 func (r *Replica) Accept(
 	sender int,
 	txn message.Transaction,
 	keys []string,
-	ts0 message.Timestamp,
 	ts message.Timestamp,
 ) (message.TxnDependencies, error) {
 	r.mu.Lock()
@@ -150,21 +149,18 @@ func (r *Replica) Accept(
 
 	txnDeps := r.getDependencies(txn, keys)
 
-	for tx := range txnDeps.Deps {
+	for tx := range txnDeps {
 		if !(r.rs.txnInfo[tx].ts0.Less(txnInfo.ts)) {
-			txnDeps.Deps.Remove(tx)
+			txnDeps.Remove(tx)
 		}
 	}
 
-	return txnDeps, nil
+	return message.TxnDependencies{Deps: txnDeps.Slice()}, nil
 }
 
 func (r *Replica) Commit(
 	sender int,
 	txn message.Transaction,
-	ts0 message.Timestamp,
-	ts message.Timestamp,
-	deps message.TxnDependencies,
 ) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -248,7 +244,7 @@ func (r *Replica) Apply(
 func (r *Replica) getDependencies(
 	txn message.Transaction,
 	keys []string,
-) message.TxnDependencies {
+) common.Set[message.Transaction] {
 	deps := common.Set[message.Transaction]{}
 
 	for _, key := range keys {
@@ -259,12 +255,10 @@ func (r *Replica) getDependencies(
 
 	delete(deps, txn)
 
-	return message.TxnDependencies{
-		Deps: deps,
-	}
+	return deps
 }
 
-func (r *Replica) awaitCommitted(origTxn message.Transaction, txns common.Set[message.Transaction]) {
+func (r *Replica) awaitCommitted(origTxn message.Transaction, txns []message.Transaction) {
 	var wg sync.WaitGroup
 
 	processTxnFunc := func(tx message.Transaction) {
@@ -292,7 +286,7 @@ func (r *Replica) awaitCommitted(origTxn message.Transaction, txns common.Set[me
 
 	processTxnFunc(origTxn)
 
-	for tx := range txns {
+	for _, tx := range txns {
 		processTxnFunc(tx)
 	}
 
@@ -303,10 +297,10 @@ func (r *Replica) awaitCommitted(origTxn message.Transaction, txns common.Set[me
 	r.mu.Lock()
 }
 
-func (r *Replica) awaitApplied(ts message.Timestamp, txns common.Set[message.Transaction]) {
+func (r *Replica) awaitApplied(ts message.Timestamp, txns []message.Transaction) {
 	var wg sync.WaitGroup
 
-	for tx := range txns {
+	for _, tx := range txns {
 		info, ok := r.rs.txnInfo[tx]
 		if !ok {
 			continue

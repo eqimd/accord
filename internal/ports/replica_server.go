@@ -88,13 +88,10 @@ func (s *replicaServer) accept(w http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	ts0 := acceptReq.TsProposed.ToMessageTimestamp()
-
 	txnDeps, err := s.replica.Accept(
 		acceptReq.Sender,
 		acceptReq.Txn.ToMessageTxn(),
 		acceptReq.TxnKeys,
-		ts0,
 		acceptReq.TsExecution.ToMessageTimestamp(),
 	)
 	if err != nil {
@@ -127,14 +124,9 @@ func (s *replicaServer) commit(w http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	ts0 := commitReq.TsProposed.ToMessageTimestamp()
-
 	err := s.replica.Commit(
 		commitReq.Sender,
 		commitReq.Txn.ToMessageTxn(),
-		ts0,
-		commitReq.TsExecution.ToMessageTimestamp(),
-		model.MessageDepsFromModel(commitReq.Deps),
 	)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)

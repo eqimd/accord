@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 
 	"github.com/eqimd/accord/internal/cluster/provider"
-	"github.com/eqimd/accord/internal/common"
 	"github.com/eqimd/accord/internal/message"
 )
 
@@ -59,10 +58,8 @@ func (c *Coordinator) Exec(query string) (string, error) {
 
 	shardToKeys := c.sharding.ShardToKeys(keys)
 
-	deps := message.TxnDependencies{
-		Deps: make(common.Set[message.Transaction]),
-	}
-	shardToDeps := map[int]common.Set[message.Transaction]{}
+	deps := []message.Transaction{}
+	shardToDeps := map[int][]message.Transaction{}
 
 	var proposedMax message.Timestamp
 	ts0PerShardQuorums := map[int]struct{}{}
@@ -109,13 +106,9 @@ func (c *Coordinator) Exec(query string) (string, error) {
 					proposedMax = propTs
 				}
 
-				deps.Deps.Union(rDeps.Deps)
+				deps = append(deps, rDeps.Deps...)
 
-				if _, ok := shardToDeps[shardID]; !ok {
-					shardToDeps[shardID] = make(common.Set[message.Transaction])
-				}
-
-				shardToDeps[shardID].Union(rDeps.Deps)
+				shardToDeps[shardID] = append(shardToDeps[shardID], rDeps.Deps...)
 			}(shardID, replicaPid, len(replicaPids))
 		}
 
@@ -135,8 +128,8 @@ func (c *Coordinator) Exec(query string) (string, error) {
 		// No fast-path quorum; perform second round-trip
 
 		tsCommit = proposedMax
-		deps.Deps = common.Set[message.Transaction]{}
-		shardToDeps = map[int]common.Set[message.Transaction]{}
+		deps = []message.Transaction{}
+		shardToDeps = map[int][]message.Transaction{}
 
 		wg := sync.WaitGroup{}
 		mu := sync.Mutex{}
@@ -153,7 +146,7 @@ func (c *Coordinator) Exec(query string) (string, error) {
 				go func(shardID, rpid int) {
 					defer shardWg.Done()
 
-					tDeps, err := c.env.Accept(c.pid, rpid, txn, keys, ts0, tsCommit)
+					tDeps, err := c.env.Accept(c.pid, rpid, txn, keys, tsCommit)
 					if err != nil {
 						slog.Error("accept error", slog.Any("error", err))
 						// TODO
@@ -162,13 +155,9 @@ func (c *Coordinator) Exec(query string) (string, error) {
 					mu.Lock()
 					defer mu.Unlock()
 
-					deps.Deps.Union(tDeps.Deps)
+					deps = append(deps, tDeps.Deps...)
 
-					if _, ok := shardToDeps[shardID]; !ok {
-						shardToDeps[shardID] = make(common.Set[message.Transaction])
-					}
-
-					shardToDeps[shardID].Union(tDeps.Deps)
+					shardToDeps[shardID] = append(shardToDeps[shardID], tDeps.Deps...)
 				}(shardID, replicaPid)
 			}
 
@@ -187,7 +176,7 @@ func (c *Coordinator) Exec(query string) (string, error) {
 
 		for replicaPid := range replicaPids {
 			go func(rpid int) {
-				err := c.env.Commit(c.pid, rpid, txn, ts0, tsCommit, deps)
+				err := c.env.Commit(c.pid, rpid, txn)
 				if err != nil {
 					slog.Error("commit error", slog.Any("error", err))
 					// TODO

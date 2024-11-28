@@ -1,7 +1,6 @@
 package model
 
 import (
-	"github.com/eqimd/accord/internal/common"
 	"github.com/eqimd/accord/internal/message"
 )
 
@@ -19,7 +18,7 @@ func (t *Txn) ToMessageTxn() message.Transaction {
 
 func ModelDepsFromMessage(deps message.TxnDependencies) []Txn {
 	modelDeps := make([]Txn, 0, len(deps.Deps))
-	for d := range deps.Deps {
+	for _, d := range deps.Deps {
 		md := Txn{
 			Hash: d.TxnHash,
 			Ts:   FromMessageTimestamp(d.Timestamp),
@@ -31,10 +30,10 @@ func ModelDepsFromMessage(deps message.TxnDependencies) []Txn {
 }
 
 func MessageDepsFromModel(deps []Txn) message.TxnDependencies {
-	msgDeps := common.Set[message.Transaction]{}
+	msgDeps := make([]message.Transaction, 0, len(deps))
 
 	for _, d := range deps {
-		msgDeps.Add(d.ToMessageTxn())
+		msgDeps = append(msgDeps, d.ToMessageTxn())
 	}
 
 	return message.TxnDependencies{

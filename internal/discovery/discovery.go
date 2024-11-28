@@ -1,12 +1,10 @@
 package discovery
 
 import (
-	"fmt"
-	"net/http"
 	"sync"
 
+	"github.com/eqimd/accord/internal/common"
 	"github.com/eqimd/accord/internal/ports/model"
-	"github.com/go-resty/resty/v2"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -26,18 +24,11 @@ func DiscoverReplicas(addrs []string) (*DiscoveryPids, error) {
 		addr := addr
 
 		errGroup.Go(func() error {
-			client := resty.New()
-			client.BaseURL = addr
-
 			var pidResp model.PidResponse
 
-			rr, err := client.R().SetResult(&pidResp).Get("/pid")
+			err := common.SendGet(addr+"/pid", &pidResp)
 			if err != nil {
 				return err
-			}
-
-			if rr.StatusCode() != http.StatusOK {
-				return fmt.Errorf("error: %s", rr.Body())
 			}
 
 			mu.Lock()

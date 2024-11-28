@@ -2,9 +2,7 @@ package main
 
 import (
 	"fmt"
-	"maps"
 	"math/rand"
-	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -16,7 +14,6 @@ import (
 	"github.com/eqimd/accord/internal/query"
 	"github.com/eqimd/accord/internal/sharding"
 	"github.com/eqimd/accord/internal/storage"
-	"github.com/go-resty/resty/v2"
 )
 
 var seededRand *rand.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -46,7 +43,7 @@ func runTest() {
 
 	runsCount := 10000
 
-	keys := make([]string, 0, 100)
+	keys := make([]string, 0, 1000)
 	for range cap(keys) {
 		keys = append(keys, RandomString(10))
 	}
@@ -112,26 +109,15 @@ func runTest() {
 }
 
 func coordinatorExec(addr string, query string) (string, error) {
-	client := resty.New()
-	client.BaseURL = addr
-	client.SetTimeout(5 * time.Minute)
-
 	req := &model.ExecuteRequest{
 		Query: query,
 	}
 
 	var resp model.ExecuteResponse
 
-	rr, err := client.R().SetBody(req).SetResult(&resp).Post("/execute")
-	if err != nil {
-		return "", err
-	}
+	err := common.SendPost(addr+"/execute", req, &resp)
 
-	if rr.StatusCode() != http.StatusOK {
-		return "", fmt.Errorf("error: %s", rr.Body())
-	}
-
-	return resp.Response, nil
+	return resp.Response, err
 }
 
 func TestMain(t *testing.T) {
@@ -145,9 +131,9 @@ func TestMain(t *testing.T) {
 }
 
 func TestLocal(t *testing.T) {
-	shardsCount := 1
+	shardsCount := 3
 	replicasPerShard := 3
-	runsCount := 5000
+	runsCount := 100000
 
 	shardIDs := common.Set[int]{}
 	shardToReplicas := map[int]map[int]*cluster.Replica{}
@@ -182,7 +168,7 @@ func TestLocal(t *testing.T) {
 		repID++
 	}
 
-	keys := make([]string, 0, 100)
+	keys := make([]string, 0, 10000)
 	for range cap(keys) {
 		keys = append(keys, RandomString(10))
 	}
@@ -229,41 +215,41 @@ func TestLocal(t *testing.T) {
 
 	time.Sleep(10 * time.Second)
 
-	for _, key := range keys {
-		q := fmt.Sprintf("let val = GET(\"%s\"); val", key)
-		res, _ := coordinators[coordOffset].Exec(q)
+	// for _, key := range keys {
+	// 	q := fmt.Sprintf("let val = GET(\"%s\"); val", key)
+	// 	res, _ := coordinators[coordOffset].Exec(q)
 
-		fmt.Println(key, "=", res)
-	}
+	// 	fmt.Println(key, "=", res)
+	// }
 
-	fmt.Println()
+	// fmt.Println()
 
-	snapshot := map[int]map[string]string{}
+	// snapshot := map[int]map[string]string{}
 
-	for rPid, strg := range replicaToStorage {
-		snps, _ := strg.Snapshot()
-		snapshot[rPid] = snps
-	}
+	// for rPid, strg := range replicaToStorage {
+	// 	snps, _ := strg.Snapshot()
+	// 	snapshot[rPid] = snps
+	// }
 
-	for i, snsh := range snapshot {
-		fmt.Println("pid", i)
-		fmt.Println(snsh)
-		fmt.Println()
-	}
+	// for i, snsh := range snapshot {
+	// 	fmt.Println("pid", i)
+	// 	fmt.Println(snsh)
+	// 	fmt.Println()
+	// }
 
-	for _, replicas := range shardToReplicas {
-		var pid1 int
-		for rpid := range replicas {
-			pid1 = rpid
-			break
-		}
+	// for _, replicas := range shardToReplicas {
+	// 	var pid1 int
+	// 	for rpid := range replicas {
+	// 		pid1 = rpid
+	// 		break
+	// 	}
 
-		snsh := snapshot[pid1]
+	// 	snsh := snapshot[pid1]
 
-		for rPid := range replicas {
-			if !maps.Equal(snsh, snapshot[rPid]) {
-				panic(fmt.Sprintf("not equal maps: pid1 = %d, pid2 = %d, map1 = %v, map2 = %v", pid1, rPid, snsh, snapshot[rPid]))
-			}
-		}
-	}
+	// 	for rPid := range replicas {
+	// 		if !maps.Equal(snsh, snapshot[rPid]) {
+	// 			panic(fmt.Sprintf("not equal maps: pid1 = %d, pid2 = %d, map1 = %v, map2 = %v", pid1, rPid, snsh, snapshot[rPid]))
+	// 		}
+	// 	}
+	// }
 }

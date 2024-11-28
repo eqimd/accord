@@ -1,14 +1,9 @@
 package environment
 
 import (
-	"fmt"
-	"net/http"
-	"time"
-
 	"github.com/eqimd/accord/internal/common"
 	"github.com/eqimd/accord/internal/message"
 	"github.com/eqimd/accord/internal/ports/model"
-	"github.com/go-resty/resty/v2"
 )
 
 type HTTPEnv struct {
@@ -41,29 +36,21 @@ func (e *HTTPEnv) PreAccept(
 		TxnKeys:    keys,
 	}
 
-	client := resty.New()
-	client.BaseURL = e.replicaToAddr[to]
-	client.SetTimeout(5 * time.Minute)
-
 	var preAcceptResp model.PreAcceptResponse
 
-	rr, err := client.R().SetBody(preAcceptReq).SetResult(&preAcceptResp).Post("/preaccept")
-	if err != nil {
-		return message.Timestamp{}, message.TxnDependencies{}, err
-	}
+	err := common.SendPost(
+		e.replicaToAddr[to]+"/preaccept",
+		preAcceptReq,
+		&preAcceptResp,
+	)
 
-	if rr.StatusCode() != http.StatusOK {
-		return message.Timestamp{}, message.TxnDependencies{}, fmt.Errorf("error: %s", rr.Body())
-	}
-
-	return preAcceptResp.TsProposed.ToMessageTimestamp(), model.MessageDepsFromModel(preAcceptResp.Deps), nil
+	return preAcceptResp.TsProposed.ToMessageTimestamp(), model.MessageDepsFromModel(preAcceptResp.Deps), err
 }
 
 func (e *HTTPEnv) Accept(
 	from, to int,
 	txn message.Transaction,
 	keys []string,
-	ts0 message.Timestamp,
 	ts message.Timestamp,
 ) (message.TxnDependencies, error) {
 	acceptReq := &model.AcceptRequest{
@@ -72,35 +59,24 @@ func (e *HTTPEnv) Accept(
 			Hash: txn.TxnHash,
 			Ts:   model.FromMessageTimestamp(txn.Timestamp),
 		},
-		TsProposed:  model.FromMessageTimestamp(ts0),
 		TxnKeys:     keys,
 		TsExecution: model.FromMessageTimestamp(ts),
 	}
 
-	client := resty.New()
-	client.BaseURL = e.replicaToAddr[to]
-	client.SetTimeout(5 * time.Minute)
-
 	var acceptResp model.AcceptResponse
 
-	rr, err := client.R().SetBody(acceptReq).SetResult(&acceptResp).Post("/accept")
-	if err != nil {
-		return message.TxnDependencies{}, err
-	}
+	err := common.SendPost(
+		e.replicaToAddr[to]+"/accept",
+		acceptReq,
+		&acceptResp,
+	)
 
-	if rr.StatusCode() != http.StatusOK {
-		return message.TxnDependencies{}, fmt.Errorf("error: %s", rr.Body())
-	}
-
-	return model.MessageDepsFromModel(acceptResp.Deps), nil
+	return model.MessageDepsFromModel(acceptResp.Deps), err
 }
 
 func (e *HTTPEnv) Commit(
 	from, to int,
 	txn message.Transaction,
-	ts0 message.Timestamp,
-	ts message.Timestamp,
-	deps message.TxnDependencies,
 ) error {
 	commitReq := &model.CommitRequest{
 		Sender: from,
@@ -108,25 +84,15 @@ func (e *HTTPEnv) Commit(
 			Hash: txn.TxnHash,
 			Ts:   model.FromMessageTimestamp(txn.Timestamp),
 		},
-		TsProposed:  model.FromMessageTimestamp(ts0),
-		TsExecution: model.FromMessageTimestamp(ts),
-		Deps:        model.ModelDepsFromMessage(deps),
 	}
 
-	client := resty.New()
-	client.BaseURL = e.replicaToAddr[to]
-	client.SetTimeout(5 * time.Minute)
+	err := common.SendPost(
+		e.replicaToAddr[to]+"/commit",
+		commitReq,
+		nil,
+	)
 
-	rr, err := client.R().SetBody(commitReq).Post("/commit")
-	if err != nil {
-		return err
-	}
-
-	if rr.StatusCode() != http.StatusOK {
-		return fmt.Errorf("error: %s", rr.Body())
-	}
-
-	return nil
+	return err
 }
 
 func (e *HTTPEnv) Read(
@@ -147,22 +113,15 @@ func (e *HTTPEnv) Read(
 		Deps:        model.ModelDepsFromMessage(deps),
 	}
 
-	client := resty.New()
-	client.BaseURL = e.replicaToAddr[to]
-	client.SetTimeout(5 * time.Minute)
-
 	var readResp model.ReadResponse
 
-	rr, err := client.R().SetBody(readReq).SetResult(&readResp).Post("/read")
-	if err != nil {
-		return nil, err
-	}
+	err := common.SendPost(
+		e.replicaToAddr[to]+"/read",
+		readReq,
+		&readResp,
+	)
 
-	if rr.StatusCode() != http.StatusOK {
-		return nil, fmt.Errorf("error: %s", rr.Body())
-	}
-
-	return readResp.Reads, nil
+	return readResp.Reads, err
 }
 
 func (e *HTTPEnv) Apply(
@@ -183,20 +142,13 @@ func (e *HTTPEnv) Apply(
 		Result:      result,
 	}
 
-	client := resty.New()
-	client.BaseURL = e.replicaToAddr[to]
-	client.SetTimeout(5 * time.Minute)
+	err := common.SendPost(
+		e.replicaToAddr[to]+"/apply",
+		applyReq,
+		nil,
+	)
 
-	rr, err := client.R().SetBody(applyReq).Post("/apply")
-	if err != nil {
-		return err
-	}
-
-	if rr.StatusCode() != http.StatusOK {
-		return fmt.Errorf("error: %s", rr.Body())
-	}
-
-	return nil
+	return err
 }
 
 func (e *HTTPEnv) ReplicaPidsByShard(shardID int) common.Set[int] {
