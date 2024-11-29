@@ -48,13 +48,11 @@ func (s *replicaServer) preAccept(w http.ResponseWriter, request *http.Request) 
 		return
 	}
 
-	msgTs := preAcceptReq.TsProposed.ToMessageTimestamp()
-
 	tsProp, deps, err := s.replica.PreAccept(
 		preAcceptReq.Sender,
-		preAcceptReq.Txn.ToMessageTxn(),
+		preAcceptReq.Txn,
 		preAcceptReq.TxnKeys,
-		msgTs,
+		preAcceptReq.TsProposed,
 	)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -64,8 +62,8 @@ func (s *replicaServer) preAccept(w http.ResponseWriter, request *http.Request) 
 	}
 
 	resp := &model.PreAcceptResponse{
-		TsProposed: model.FromMessageTimestamp(tsProp),
-		Deps:       model.ModelDepsFromMessage(deps),
+		TsProposed: tsProp,
+		Deps:       deps,
 	}
 
 	w.Header().Add("Content-Type", "application/json")
@@ -90,9 +88,9 @@ func (s *replicaServer) accept(w http.ResponseWriter, request *http.Request) {
 
 	txnDeps, err := s.replica.Accept(
 		acceptReq.Sender,
-		acceptReq.Txn.ToMessageTxn(),
+		acceptReq.Txn,
 		acceptReq.TxnKeys,
-		acceptReq.TsExecution.ToMessageTimestamp(),
+		acceptReq.TsExecution,
 	)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -102,7 +100,7 @@ func (s *replicaServer) accept(w http.ResponseWriter, request *http.Request) {
 	}
 
 	acceptResp := &model.AcceptResponse{
-		Deps: model.ModelDepsFromMessage(txnDeps),
+		Deps: txnDeps,
 	}
 
 	w.Header().Add("Content-Type", "application/json")
@@ -126,7 +124,8 @@ func (s *replicaServer) commit(w http.ResponseWriter, request *http.Request) {
 
 	err := s.replica.Commit(
 		commitReq.Sender,
-		commitReq.Txn.ToMessageTxn(),
+		commitReq.Txn,
+		commitReq.Ts,
 	)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -150,10 +149,10 @@ func (s *replicaServer) read(w http.ResponseWriter, request *http.Request) {
 
 	reads, err := s.replica.Read(
 		readReq.Sender,
-		readReq.Txn.ToMessageTxn(),
+		readReq.Txn,
 		readReq.TxnKeys,
-		readReq.TsExecution.ToMessageTimestamp(),
-		model.MessageDepsFromModel(readReq.Deps),
+		readReq.TsExecution,
+		readReq.Deps,
 	)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -187,8 +186,8 @@ func (s *replicaServer) apply(w http.ResponseWriter, request *http.Request) {
 	err := s.replica.Apply(
 		applyReq.Sender,
 		applyReq.Txn.ToMessageTxn(),
-		applyReq.TsExecution.ToMessageTimestamp(),
-		model.MessageDepsFromModel(applyReq.Deps),
+		applyReq.TsExecution,
+		applyReq.Deps,
 		applyReq.Result,
 	)
 	if err != nil {

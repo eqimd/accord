@@ -27,12 +27,9 @@ func (e *HTTPEnv) PreAccept(
 	ts0 message.Timestamp,
 ) (message.Timestamp, message.TxnDependencies, error) {
 	preAcceptReq := &model.PreAcceptRequest{
-		Sender: from,
-		Txn: model.Txn{
-			Hash: txn.TxnHash,
-			Ts:   model.FromMessageTimestamp(txn.Timestamp),
-		},
-		TsProposed: model.FromMessageTimestamp(ts0),
+		Sender:     from,
+		Txn:        txn,
+		TsProposed: ts0,
 		TxnKeys:    keys,
 	}
 
@@ -44,7 +41,7 @@ func (e *HTTPEnv) PreAccept(
 		&preAcceptResp,
 	)
 
-	return preAcceptResp.TsProposed.ToMessageTimestamp(), model.MessageDepsFromModel(preAcceptResp.Deps), err
+	return preAcceptResp.TsProposed, preAcceptResp.Deps, err
 }
 
 func (e *HTTPEnv) Accept(
@@ -54,13 +51,10 @@ func (e *HTTPEnv) Accept(
 	ts message.Timestamp,
 ) (message.TxnDependencies, error) {
 	acceptReq := &model.AcceptRequest{
-		Sender: from,
-		Txn: model.Txn{
-			Hash: txn.TxnHash,
-			Ts:   model.FromMessageTimestamp(txn.Timestamp),
-		},
+		Sender:      from,
+		Txn:         txn,
 		TxnKeys:     keys,
-		TsExecution: model.FromMessageTimestamp(ts),
+		TsExecution: ts,
 	}
 
 	var acceptResp model.AcceptResponse
@@ -71,19 +65,18 @@ func (e *HTTPEnv) Accept(
 		&acceptResp,
 	)
 
-	return model.MessageDepsFromModel(acceptResp.Deps), err
+	return acceptResp.Deps, err
 }
 
 func (e *HTTPEnv) Commit(
 	from, to int,
 	txn message.Transaction,
+	ts message.Timestamp,
 ) error {
 	commitReq := &model.CommitRequest{
 		Sender: from,
-		Txn: model.Txn{
-			Hash: txn.TxnHash,
-			Ts:   model.FromMessageTimestamp(txn.Timestamp),
-		},
+		Txn:    txn,
+		Ts:     ts,
 	}
 
 	err := common.SendPost(
@@ -103,14 +96,11 @@ func (e *HTTPEnv) Read(
 	deps message.TxnDependencies,
 ) (map[string]string, error) {
 	readReq := &model.ReadRequest{
-		Sender: from,
-		Txn: model.Txn{
-			Hash: txn.TxnHash,
-			Ts:   model.FromMessageTimestamp(txn.Timestamp),
-		},
-		TsExecution: model.FromMessageTimestamp(ts),
+		Sender:      from,
+		Txn:         txn,
+		TsExecution: ts,
 		TxnKeys:     keys,
-		Deps:        model.ModelDepsFromMessage(deps),
+		Deps:        deps,
 	}
 
 	var readResp model.ReadResponse
@@ -137,8 +127,8 @@ func (e *HTTPEnv) Apply(
 			Hash: txn.TxnHash,
 			Ts:   model.FromMessageTimestamp(txn.Timestamp),
 		},
-		TsExecution: model.FromMessageTimestamp(ts),
-		Deps:        model.ModelDepsFromMessage(deps),
+		TsExecution: ts,
+		Deps:        deps,
 		Result:      result,
 	}
 

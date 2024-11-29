@@ -150,7 +150,7 @@ func (r *Replica) Accept(
 	txnDeps := r.getDependencies(txn, keys)
 
 	for tx := range txnDeps {
-		if !(r.rs.txnInfo[tx].ts0.Less(txnInfo.ts)) {
+		if !(r.rs.txnInfo[tx].ts0.Less(ts)) {
 			txnDeps.Remove(tx)
 		}
 	}
@@ -161,12 +161,14 @@ func (r *Replica) Accept(
 func (r *Replica) Commit(
 	sender int,
 	txn message.Transaction,
+	ts message.Timestamp,
 ) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	txnInfo := r.rs.txnInfo[txn]
 
+	txnInfo.ts = ts
 	txnInfo.state = message.TxnStateCommitted
 
 	for _, ch := range txnInfo.commitsPubSub {
@@ -232,11 +234,11 @@ func (r *Replica) Apply(
 
 	txnInfo.appliesPubSub = nil
 
-	for _, k := range txnInfo.keys {
-		delete(r.rs.keyToTxns[k], txn)
-	}
+	// for _, k := range txnInfo.keys {
+	// 	delete(r.rs.keyToTxns[k], txn)
+	// }
 
-	delete(r.rs.txnInfo, txn)
+	// delete(r.rs.txnInfo, txn)
 
 	return nil
 }

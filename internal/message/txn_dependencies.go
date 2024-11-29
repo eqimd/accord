@@ -1,5 +1,5 @@
 package message
 
 type TxnDependencies struct {
-	Deps []Transaction
+	Deps []Transaction `json:"deps"`
 }

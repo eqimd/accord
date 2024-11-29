@@ -58,7 +58,6 @@ func (c *Coordinator) Exec(query string) (string, error) {
 
 	shardToKeys := c.sharding.ShardToKeys(keys)
 
-	deps := []message.Transaction{}
 	shardToDeps := map[int][]message.Transaction{}
 
 	var proposedMax message.Timestamp
@@ -106,8 +105,6 @@ func (c *Coordinator) Exec(query string) (string, error) {
 					proposedMax = propTs
 				}
 
-				deps = append(deps, rDeps.Deps...)
-
 				shardToDeps[shardID] = append(shardToDeps[shardID], rDeps.Deps...)
 			}(shardID, replicaPid, len(replicaPids))
 		}
@@ -128,7 +125,6 @@ func (c *Coordinator) Exec(query string) (string, error) {
 		// No fast-path quorum; perform second round-trip
 
 		tsCommit = proposedMax
-		deps = []message.Transaction{}
 		shardToDeps = map[int][]message.Transaction{}
 
 		wg := sync.WaitGroup{}
@@ -155,8 +151,6 @@ func (c *Coordinator) Exec(query string) (string, error) {
 					mu.Lock()
 					defer mu.Unlock()
 
-					deps = append(deps, tDeps.Deps...)
-
 					shardToDeps[shardID] = append(shardToDeps[shardID], tDeps.Deps...)
 				}(shardID, replicaPid)
 			}
@@ -176,7 +170,7 @@ func (c *Coordinator) Exec(query string) (string, error) {
 
 		for replicaPid := range replicaPids {
 			go func(rpid int) {
-				err := c.env.Commit(c.pid, rpid, txn)
+				err := c.env.Commit(c.pid, rpid, txn, tsCommit)
 				if err != nil {
 					slog.Error("commit error", slog.Any("error", err))
 					// TODO

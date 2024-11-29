@@ -1,9 +1,9 @@
 package message
 
 type Timestamp struct {
-	LocalTime   uint64
-	LogicalTime int
-	Pid         int
+	LocalTime   uint64 `json:"local_time"`
+	LogicalTime int    `json:"logical_time"`
+	Pid         int    `json:"pid"`
 }
 
 func (ts Timestamp) Less(other Timestamp) bool {

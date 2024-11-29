@@ -56,8 +56,9 @@ func (e *Local) Accept(
 func (e *Local) Commit(
 	from, to int,
 	txn message.Transaction,
+	ts message.Timestamp,
 ) error {
-	return e.replicas[to].Commit(from, txn)
+	return e.replicas[to].Commit(from, txn, ts)
 }
 
 func (e *Local) Read(

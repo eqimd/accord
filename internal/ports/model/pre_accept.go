@@ -1,13 +1,15 @@
 package model
 
+import "github.com/eqimd/accord/internal/message"
+
 type PreAcceptRequest struct {
-	Sender     int       `json:"sender"`
-	Txn        Txn       `json:"txn"`
-	TsProposed Timestamp `json:"ts_proposed"`
-	TxnKeys    []string  `json:"txn_keys"`
+	Sender     int                 `json:"sender"`
+	Txn        message.Transaction `json:"txn"`
+	TsProposed message.Timestamp   `json:"ts_proposed"`
+	TxnKeys    []string            `json:"txn_keys"`
 }
 
 type PreAcceptResponse struct {
-	TsProposed Timestamp `json:"ts_proposed"`
-	Deps       []Txn     `json:"deps"`
+	TsProposed message.Timestamp       `json:"ts_proposed"`
+	Deps       message.TxnDependencies `json:"deps"`
 }

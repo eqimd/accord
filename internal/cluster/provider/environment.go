@@ -23,6 +23,7 @@ type Environment interface {
 	Commit(
 		from, to int,
 		txn message.Transaction,
+		ts message.Timestamp,
 	) error
 
 	Read(
