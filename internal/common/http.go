@@ -13,6 +13,7 @@ func SendGet(addr string, result any) error {
 	if err != nil {
 		return fmt.Errorf("http get error: %w", err)
 	}
+	defer r.Body.Close()
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -48,6 +49,7 @@ func SendPost(addr string, reqBody any, result any) error {
 	if err != nil {
 		return fmt.Errorf("http get error: %w", err)
 	}
+	defer r.Body.Close()
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {

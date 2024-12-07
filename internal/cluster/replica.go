@@ -234,11 +234,11 @@ func (r *Replica) Apply(
 
 	txnInfo.appliesPubSub = nil
 
-	// for _, k := range txnInfo.keys {
-	// 	delete(r.rs.keyToTxns[k], txn)
-	// }
+	for _, k := range txnInfo.keys {
+		delete(r.rs.keyToTxns[k], txn)
+	}
 
-	// delete(r.rs.txnInfo, txn)
+	delete(r.rs.txnInfo, txn)
 
 	return nil
 }

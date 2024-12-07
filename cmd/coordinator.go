@@ -76,9 +76,9 @@ var coordinatorCmd = &cobra.Command{
 		server := &http.Server{
 			Addr:         addr,
 			Handler:      handler,
-			ReadTimeout:  5 * time.Minute,
-			WriteTimeout: 5 * time.Minute,
-			IdleTimeout:  5 * time.Minute,
+			ReadTimeout:  15 * time.Second,
+			WriteTimeout: 15 * time.Second,
+			IdleTimeout:  15 * time.Second,
 		}
 
 		return server.ListenAndServe()

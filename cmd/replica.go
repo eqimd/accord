@@ -29,9 +29,9 @@ var replicaCmd = &cobra.Command{
 		server := &http.Server{
 			Addr:         addr,
 			Handler:      handler,
-			ReadTimeout:  5 * time.Minute,
-			WriteTimeout: 5 * time.Minute,
-			IdleTimeout:  5 * time.Minute,
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 10 * time.Second,
+			IdleTimeout:  10 * time.Second,
 		}
 
 		return server.ListenAndServe()
