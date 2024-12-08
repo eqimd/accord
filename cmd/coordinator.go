@@ -2,19 +2,18 @@ package cmd
 
 import (
 	"encoding/json"
-	"net/http"
+	"net"
 	"os"
-	"time"
 
 	"github.com/eqimd/accord/cmd/config"
 	"github.com/eqimd/accord/internal/cluster"
 	"github.com/eqimd/accord/internal/common"
-	"github.com/eqimd/accord/internal/discovery"
 	"github.com/eqimd/accord/internal/environment"
-	"github.com/eqimd/accord/internal/ports"
+	"github.com/eqimd/accord/internal/ports/rpc"
 	"github.com/eqimd/accord/internal/query"
 	"github.com/eqimd/accord/internal/sharding"
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
 )
 
 func init() {
@@ -38,29 +37,19 @@ var coordinatorCmd = &cobra.Command{
 			return err
 		}
 
-		addrs := make([]string, 0, len(config.Replicas))
+		addrToShard := map[string]int{}
 		shards := common.Set[int]{}
 
 		for _, r := range config.Replicas {
-			addrs = append(addrs, r.Address)
+			addrToShard[r.Address] = r.ShardID
 			shards.Add(r.ShardID)
 		}
 
-		discoveryPids, err := discovery.DiscoverReplicas(addrs)
+		env, err := environment.NewGRPCEnv(addrToShard)
 		if err != nil {
 			return err
 		}
 
-		shardToPids := map[int][]int{}
-		replicaToAddr := map[int]string{}
-		for _, r := range config.Replicas {
-			pid := discoveryPids.AddrToPid[r.Address]
-
-			shardToPids[r.ShardID] = append(shardToPids[r.ShardID], pid)
-			replicaToAddr[pid] = r.Address
-		}
-
-		env := environment.NewHTTP(shardToPids, replicaToAddr)
 		shrd := sharding.NewHash(shards)
 		qexecutor := query.NewExecutor()
 
@@ -71,16 +60,14 @@ var coordinatorCmd = &cobra.Command{
 			qexecutor,
 		)
 
-		handler := ports.NewCoordinatorHandler(coordinator)
-
-		server := &http.Server{
-			Addr:         addr,
-			Handler:      handler,
-			ReadTimeout:  15 * time.Second,
-			WriteTimeout: 15 * time.Second,
-			IdleTimeout:  15 * time.Second,
+		lis, err := net.Listen("tcp", addr)
+		if err != nil {
+			return err
 		}
 
-		return server.ListenAndServe()
+		grpcServer := grpc.NewServer()
+		rpc.RegisterCoordinatorServer(grpcServer, rpc.NewCoordinatorServer(coordinator))
+
+		return grpcServer.Serve(lis)
 	},
 }

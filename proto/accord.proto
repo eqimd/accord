@@ -1,0 +1,99 @@
+option go_package = "github.com/eqimd/accord/internal/ports/rpc";
+
+message Transaction {
+    required string hash = 1;
+    required TxnTimestamp timestamp = 2;
+}
+
+message TxnTimestamp {
+    required uint64 local_time = 1;
+    required int32 logical_time = 2;
+    required int32 pid = 3;
+}
+
+message PreAcceptRequest {
+    required Transaction txn = 1;
+    repeated string keys = 2;
+    required TxnTimestamp ts0 = 3;
+    required int32 sender = 4;
+}
+
+message PreAcceptResponse {
+    required TxnTimestamp ts = 1;
+    repeated Transaction deps = 2;
+}
+
+message AcceptRequest {
+    required Transaction txn = 1;
+    repeated string keys = 2;
+    required TxnTimestamp ts = 3;
+    required int32 sender = 4;
+}
+
+message AcceptResponse {
+    repeated Transaction deps = 1;
+}
+
+message CommitRequest {
+    required Transaction txn = 1;
+    required TxnTimestamp ts = 2;
+    required int32 sender = 4;
+}
+
+message CommitResponse {}
+
+message ReadRequest {
+    required Transaction txn = 1;
+    repeated string keys = 2;
+    required TxnTimestamp ts = 3;
+    repeated Transaction deps = 4;
+    required int32 sender = 5;
+}
+
+message ReadResponse {
+    map<string, string> reads = 1;
+}
+
+message ApplyRequest {
+    required Transaction txn = 1;
+    required TxnTimestamp ts = 2;
+    repeated Transaction deps = 3;
+    map<string, string> result = 4;
+    required int32 sender = 5;
+}
+
+message ApplyResponse {}
+
+message PidRequest {}
+
+message PidResponse {
+    required int32 pid = 1;
+}
+
+message SnapshotRequest {}
+
+message SnapshotResponse {
+    map<string, string> result = 1;
+}
+
+service Replica {
+    rpc PreAccept(PreAcceptRequest) returns (PreAcceptResponse) {}
+    rpc Accept(AcceptRequest) returns (AcceptResponse) {}
+    rpc Commit(CommitRequest) returns (CommitResponse) {}
+    rpc Read(ReadRequest) returns (ReadResponse) {}
+    rpc Apply(ApplyRequest) returns (ApplyResponse) {}
+    rpc Pid(PidRequest) returns (PidResponse) {}
+    rpc Snapshot(SnapshotRequest) returns (SnapshotResponse) {}
+}
+
+message ExecuteRequest {
+    required string query = 1;
+}
+
+message ExecuteResponse {
+    required string result = 1;
+}
+
+service Coordinator {
+    rpc Execute(ExecuteRequest) returns (ExecuteResponse) {}
+}

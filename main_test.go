@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"math/rand"
@@ -11,10 +12,12 @@ import (
 	"github.com/eqimd/accord/internal/cluster"
 	"github.com/eqimd/accord/internal/common"
 	"github.com/eqimd/accord/internal/environment"
-	"github.com/eqimd/accord/internal/ports/model"
+	"github.com/eqimd/accord/internal/ports/rpc"
 	"github.com/eqimd/accord/internal/query"
 	"github.com/eqimd/accord/internal/sharding"
 	"github.com/eqimd/accord/internal/storage"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 var seededRand *rand.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -37,9 +40,22 @@ func RandomString(length int) string {
 
 func runTest() {
 	coordinators := []string{
-		"http://localhost:5000",
-		"http://localhost:6000",
-		"http://localhost:7000",
+		"localhost:5000",
+		"localhost:6000",
+		"localhost:7000",
+	}
+
+	rpcClients := []rpc.CoordinatorClient{}
+
+	for _, addr := range coordinators {
+		conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			panic(err)
+		}
+
+		client := rpc.NewCoordinatorClient(conn)
+
+		rpcClients = append(rpcClients, client)
 	}
 
 	runsCount := 10000
@@ -48,8 +64,6 @@ func runTest() {
 	for range cap(keys) {
 		keys = append(keys, RandomString(10))
 	}
-
-	resCh := make(chan string)
 
 	var wg sync.WaitGroup
 
@@ -70,27 +84,16 @@ func runTest() {
 			q := fmt.Sprintf(`let val1 = SET("%s", "%s"); val1`, key1, val1)
 
 			coordPos := rand.Int() % len(coordinators)
-			coordAddr := coordinators[coordPos]
+			coordClient := rpcClients[coordPos]
 
-			result, err := coordinatorExec(coordAddr, q)
+			_, err := coordinatorExec(coordClient, q)
 			if err != nil {
 				panic(err)
 			}
-
-			resCh <- result
 		}()
 	}
 
-	go func() {
-		wg.Wait()
-
-		close(resCh)
-	}()
-
-	for s := range resCh {
-		_ = s
-		// fmt.Println(s)
-	}
+	wg.Wait()
 
 	end := time.Now()
 
@@ -99,26 +102,21 @@ func runTest() {
 
 	time.Sleep(10 * time.Second)
 
-	for _, key := range keys {
-		q := fmt.Sprintf("let val = GET(\"%s\"); val", key)
-		_, _ = coordinatorExec(coordinators[0], q)
-
-		// fmt.Println(key, "=", res)
-	}
-
 	fmt.Println()
 }
 
-func coordinatorExec(addr string, query string) (string, error) {
-	req := &model.ExecuteRequest{
-		Query: query,
+func coordinatorExec(client rpc.CoordinatorClient, query string) (string, error) {
+	resp, err := client.Execute(
+		context.Background(),
+		&rpc.ExecuteRequest{
+			Query: &query,
+		},
+	)
+	if err != nil {
+		return "", err
 	}
 
-	var resp model.ExecuteResponse
-
-	err := common.SendPost(addr+"/execute", req, &resp)
-
-	return resp.Response, err
+	return *resp.Result, nil
 }
 
 func TestMain(t *testing.T) {

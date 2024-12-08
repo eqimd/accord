@@ -1,14 +1,14 @@
 package cmd
 
 import (
-	"net/http"
+	"net"
 	"os"
-	"time"
 
 	"github.com/eqimd/accord/internal/cluster"
-	"github.com/eqimd/accord/internal/ports"
+	"github.com/eqimd/accord/internal/ports/rpc"
 	"github.com/eqimd/accord/internal/storage"
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
 )
 
 func init() {
@@ -24,16 +24,14 @@ var replicaCmd = &cobra.Command{
 
 		replica := cluster.NewReplica(os.Getpid(), storage)
 
-		handler := ports.NewReplicaHandler(replica)
-
-		server := &http.Server{
-			Addr:         addr,
-			Handler:      handler,
-			ReadTimeout:  10 * time.Second,
-			WriteTimeout: 10 * time.Second,
-			IdleTimeout:  10 * time.Second,
+		lis, err := net.Listen("tcp", addr)
+		if err != nil {
+			return err
 		}
 
-		return server.ListenAndServe()
+		grpcServer := grpc.NewServer()
+		rpc.RegisterReplicaServer(grpcServer, rpc.NewReplicaServer(replica))
+
+		return grpcServer.Serve(lis)
 	},
 }
