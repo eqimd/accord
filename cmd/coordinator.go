@@ -8,10 +8,13 @@ import (
 	"github.com/eqimd/accord/cmd/config"
 	"github.com/eqimd/accord/internal/cluster"
 	"github.com/eqimd/accord/internal/common"
+	"github.com/eqimd/accord/internal/coordinator"
 	"github.com/eqimd/accord/internal/environment"
 	"github.com/eqimd/accord/internal/ports/rpc"
 	"github.com/eqimd/accord/internal/query"
 	"github.com/eqimd/accord/internal/sharding"
+	"github.com/eqimd/accord/internal/storage"
+	"github.com/eqimd/accord/proto"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 )
@@ -26,6 +29,9 @@ var coordinatorCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		configPath := args[0]
 		addr := args[1]
+
+		storage := storage.NewInMemory()
+		replica := cluster.NewReplica(os.Getpid(), storage)
 
 		b, err := os.ReadFile(configPath)
 		if err != nil {
@@ -45,7 +51,12 @@ var coordinatorCmd = &cobra.Command{
 			shards.Add(r.ShardID)
 		}
 
-		env, err := environment.NewGRPCEnv(addrToShard)
+		env, err := environment.NewGRPCEnv(
+			addrToShard,
+			replica,
+			addr,
+			os.Getpid(),
+		)
 		if err != nil {
 			return err
 		}
@@ -53,7 +64,7 @@ var coordinatorCmd = &cobra.Command{
 		shrd := sharding.NewHash(shards)
 		qexecutor := query.NewExecutor()
 
-		coordinator := cluster.NewCoordinator(
+		coordinator := coordinator.NewCoordinator(
 			os.Getpid(),
 			env,
 			shrd,
@@ -66,7 +77,9 @@ var coordinatorCmd = &cobra.Command{
 		}
 
 		grpcServer := grpc.NewServer()
-		rpc.RegisterCoordinatorServer(grpcServer, rpc.NewCoordinatorServer(coordinator))
+
+		proto.RegisterCoordinatorServer(grpcServer, rpc.NewCoordinatorServer(coordinator))
+		proto.RegisterReplicaServer(grpcServer, rpc.NewReplicaServer(replica))
 
 		return grpcServer.Serve(lis)
 	},

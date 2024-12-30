@@ -3,23 +3,24 @@ package rpc
 import (
 	"context"
 
-	"github.com/eqimd/accord/internal/cluster"
+	"github.com/eqimd/accord/internal/coordinator"
+	"github.com/eqimd/accord/proto"
 )
 
 type coordinatorServer struct {
-	UnimplementedCoordinatorServer
+	proto.UnimplementedCoordinatorServer
 
-	coordinator *cluster.Coordinator
+	coordinator *coordinator.Coordinator
 }
 
-func NewCoordinatorServer(coordinator *cluster.Coordinator) *coordinatorServer {
+func NewCoordinatorServer(coordinator *coordinator.Coordinator) *coordinatorServer {
 	return &coordinatorServer{
 		coordinator: coordinator,
 	}
 }
 
-func (s *coordinatorServer) Execute(ctx context.Context, req *ExecuteRequest) (*ExecuteResponse, error) {
+func (s *coordinatorServer) Execute(ctx context.Context, req *proto.ExecuteRequest) (*proto.ExecuteResponse, error) {
 	res, err := s.coordinator.Exec(*req.Query)
 
-	return &ExecuteResponse{Result: &res}, err
+	return &proto.ExecuteResponse{Result: &res}, err
 }

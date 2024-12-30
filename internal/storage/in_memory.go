@@ -6,7 +6,7 @@ import (
 )
 
 type InMemory struct {
-	mu sync.Mutex
+	mu sync.RWMutex
 	m  map[string]string
 }
 
@@ -17,15 +17,15 @@ func NewInMemory() *InMemory {
 }
 
 func (s *InMemory) Get(key string) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	return s.m[key], nil
 }
 
 func (s *InMemory) GetBatch(keys []string) ([]string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	vals := make([]string, len(keys))
 	for i, k := range keys {
@@ -56,8 +56,8 @@ func (s *InMemory) SetBatch(kv map[string]string) error {
 }
 
 func (s *InMemory) Snapshot() (map[string]string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	cloned := maps.Clone(s.m)
 

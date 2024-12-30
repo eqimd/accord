@@ -3,9 +3,10 @@ package cluster
 import (
 	"sync"
 
-	"github.com/eqimd/accord/internal/cluster/provider"
 	"github.com/eqimd/accord/internal/common"
-	"github.com/eqimd/accord/internal/message"
+	"github.com/eqimd/accord/internal/storage"
+	"github.com/eqimd/accord/proto"
+	rpc "github.com/eqimd/accord/proto"
 )
 
 type State int
@@ -17,21 +18,21 @@ const (
 )
 
 type Replica struct {
-	mu sync.Mutex
-
 	state State
 
-	pid     int
-	storage provider.Storage
+	pid     int32
+	storage *storage.InMemory
 
 	rs *replicaState
 }
 
 type txnInfo struct {
-	ts0           message.Timestamp
-	ts            message.Timestamp
-	highestTs     message.Timestamp
-	state         message.TxnState
+	mu sync.RWMutex
+
+	ts0           *rpc.TxnTimestamp
+	ts            *rpc.TxnTimestamp
+	highestTs     *rpc.TxnTimestamp
+	state         txnState
 	keys          []string
 	commitsPubSub []chan struct{}
 	appliesPubSub []chan struct{}
@@ -39,100 +40,152 @@ type txnInfo struct {
 
 type replicaState struct {
 	// mapping of: key -> transactions using this key
-	keyToTxns map[string]common.Set[message.Transaction]
+	keyToTxnsMu sync.RWMutex
+	keyToTxns   map[string]common.Set[txnWrap]
 
-	txnInfo map[message.Transaction]*txnInfo
+	txnInfo sync.Map
+	// txnInfo map[message.Transaction]*txnInfo
+}
+
+func (rs *replicaState) getTxnInfo(txn txnWrap) (*txnInfo, bool) {
+	var ptr *txnInfo
+
+	val, ok := rs.txnInfo.Load(txn)
+
+	if ok {
+		ptr = val.(*txnInfo)
+	}
+
+	return ptr, ok
+}
+
+func (rs *replicaState) getAndDeleteTxnInfo(txn txnWrap) *txnInfo {
+	val, _ := rs.txnInfo.LoadAndDelete(txn)
+
+	return val.(*txnInfo)
+}
+
+func (rs *replicaState) setTxnInfo(txn txnWrap, info *txnInfo) {
+	rs.txnInfo.Store(txn, info)
 }
 
 func newReplicaState() *replicaState {
 	return &replicaState{
-		keyToTxns: make(map[string]common.Set[message.Transaction]),
-		txnInfo:   make(map[message.Transaction]*txnInfo),
+		keyToTxns: make(map[string]common.Set[txnWrap]),
 	}
 }
 
-func NewReplica(pid int, storage provider.Storage) *Replica {
+func NewReplica(pid int, storage *storage.InMemory) *Replica {
 	return &Replica{
 		state:   StateRunning,
-		pid:     pid,
+		pid:     int32(pid),
 		storage: storage,
 		rs:      newReplicaState(),
 	}
 }
 
 func (r *Replica) Pid() int {
-	return r.pid
+	return int(r.pid)
 }
 
 func (r *Replica) PreAccept(
 	sender int,
-	txn message.Transaction,
-	keys []string,
-	ts0 message.Timestamp,
-) (message.Timestamp, message.TxnDependencies, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
+	request *rpc.PreAcceptRequest,
+) (*rpc.PreAcceptResponse, error) {
+	ts0 := request.Ts0
 	proposedTs := ts0
 
-	txDeps := r.getDependencies(txn, keys)
+	txn := wrapGRPCTxn(request.Txn)
+
+	txDeps := r.getDependencies(txn, request.Keys)
 
 	maxHighest := ts0
 
 	for depTx := range txDeps {
-		info := r.rs.txnInfo[depTx]
+		info, ok := r.rs.getTxnInfo(depTx)
+		if !ok {
+			continue
+		}
 
-		if maxHighest.Less(info.highestTs) {
+		info.mu.RLock()
+
+		if proto.TsLess(maxHighest, info.highestTs) {
 			maxHighest = info.highestTs
 		}
+
+		info.mu.RUnlock()
 	}
 
-	if maxHighest != ts0 {
-		proposedTs = message.Timestamp{
+	if !proto.TsEqual(maxHighest, ts0) {
+		logTime := *maxHighest.LogicalTime + 1
+		proposedTs = &proto.TxnTimestamp{
 			LocalTime:   maxHighest.LocalTime,
-			LogicalTime: maxHighest.LogicalTime + 1,
-			Pid:         r.pid,
+			LogicalTime: &logTime,
+			Pid:         &r.pid,
 		}
 	}
 
-	r.rs.txnInfo[txn] = &txnInfo{
+	info := &txnInfo{
 		ts0:       ts0,
 		ts:        proposedTs,
 		highestTs: proposedTs,
-		state:     message.TxnStatePreAccepted,
-		keys:      keys,
+		state:     statePreAccepted,
+		keys:      request.Keys,
 	}
+
+	r.rs.setTxnInfo(txn, info)
 
 	for tx := range txDeps {
-		if !(r.rs.txnInfo[tx].ts0.Less(ts0)) {
+		info, ok := r.rs.getTxnInfo(tx)
+		if !ok {
+			continue
+		}
+
+		info.mu.RLock()
+
+		if !proto.TsLess(info.ts0, ts0) {
 			delete(txDeps, tx)
 		}
+
+		info.mu.RUnlock()
 	}
 
-	for _, key := range keys {
+	r.rs.keyToTxnsMu.Lock()
+	for _, key := range request.Keys {
 		if _, ok := r.rs.keyToTxns[key]; !ok {
-			r.rs.keyToTxns[key] = make(common.Set[message.Transaction])
+			r.rs.keyToTxns[key] = make(common.Set[txnWrap])
 		}
 
 		r.rs.keyToTxns[key].Add(txn)
 	}
+	r.rs.keyToTxnsMu.Unlock()
 
-	return proposedTs, message.TxnDependencies{Deps: txDeps.Slice()}, nil
+	deps := make([]*proto.Transaction, 0, len(txDeps))
+	for d := range txDeps {
+		tx := unwrapTxn(&d)
+
+		deps = append(deps, tx)
+	}
+
+	resp := &proto.PreAcceptResponse{
+		Ts:   proposedTs,
+		Deps: deps,
+	}
+
+	return resp, nil
 }
 
 func (r *Replica) Accept(
 	sender int,
-	txn message.Transaction,
-	keys []string,
-	ts message.Timestamp,
-) (message.TxnDependencies, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	request *rpc.AcceptRequest,
+) (*rpc.AcceptResponse, error) {
+	txn := wrapGRPCTxn(request.Txn)
+	txnInfo, _ := r.rs.getTxnInfo(txn)
 
-	txnInfo := r.rs.txnInfo[txn]
+	txnInfo.mu.Lock()
 
-	if txnInfo.highestTs.Less(ts) {
-		txnInfo.highestTs = ts
+	if proto.TsLess(txnInfo.highestTs, request.Ts) {
+		txnInfo.highestTs = request.Ts
 
 		/*
 			Original article does not contain this statement
@@ -142,37 +195,57 @@ func (r *Replica) Accept(
 			but when processing Apply(...) we should await
 			all dependencies with lower t to be applied
 		*/
-		txnInfo.ts = ts
+		txnInfo.ts = request.Ts
 	}
 
-	txnInfo.state = message.TxnStateAccepted
+	txnInfo.state = stateAccepted
 
-	txnDeps := r.getDependencies(txn, keys)
+	txnInfo.mu.Unlock()
+
+	txnDeps := r.getDependencies(txn, request.Keys)
 
 	for tx := range txnDeps {
-		if !(r.rs.txnInfo[tx].ts0.Less(ts)) {
+		info, ok := r.rs.getTxnInfo(tx)
+		if !ok {
+			continue
+		}
+
+		info.mu.RLock()
+
+		if !proto.TsLess(info.ts0, request.Ts) {
 			txnDeps.Remove(tx)
 		}
+
+		info.mu.RUnlock()
 	}
 
-	return message.TxnDependencies{Deps: txnDeps.Slice()}, nil
+	deps := make([]*proto.Transaction, 0, len(txnDeps))
+	for d := range txnDeps {
+		tx := unwrapTxn(&d)
+
+		deps = append(deps, tx)
+	}
+
+	return &proto.AcceptResponse{
+		Deps: deps,
+	}, nil
 }
 
 func (r *Replica) Commit(
 	sender int,
-	txn message.Transaction,
-	ts message.Timestamp,
+	request *rpc.CommitRequest,
 ) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	txn := wrapGRPCTxn(request.Txn)
+	txnInfo, _ := r.rs.getTxnInfo(txn)
 
-	txnInfo := r.rs.txnInfo[txn]
+	txnInfo.mu.Lock()
+	defer txnInfo.mu.Unlock()
 
-	txnInfo.ts = ts
-	txnInfo.state = message.TxnStateCommitted
+	txnInfo.ts = request.Ts
+	txnInfo.state = stateCommited
 
 	for _, ch := range txnInfo.commitsPubSub {
-		ch <- struct{}{}
+		close(ch)
 	}
 
 	txnInfo.commitsPubSub = nil
@@ -182,24 +255,18 @@ func (r *Replica) Commit(
 
 func (r *Replica) Read(
 	sender int,
-	txn message.Transaction,
-	keys []string,
-	ts message.Timestamp,
-	deps message.TxnDependencies,
+	request *rpc.ReadRequest,
 ) (map[string]string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.awaitCommitted(request.Txn, request.Deps)
+	r.awaitApplied(request.Ts, request.Deps)
 
-	r.awaitCommitted(txn, deps.Deps)
-	r.awaitApplied(ts, deps.Deps)
-
-	vals, err := r.storage.GetBatch(keys)
+	vals, err := r.storage.GetBatch(request.Keys)
 	if err != nil {
 		// TODO
 	}
 
-	reads := make(map[string]string, len(keys))
-	for i, k := range keys {
+	reads := make(map[string]string, len(request.Keys))
+	for i, k := range request.Keys {
 		reads[k] = vals[i]
 	}
 
@@ -208,132 +275,138 @@ func (r *Replica) Read(
 
 func (r *Replica) Apply(
 	sender int,
-	txn message.Transaction,
-	ts message.Timestamp,
-	deps message.TxnDependencies,
-	result map[string]string,
+	request *rpc.ApplyRequest,
 ) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.awaitCommitted(request.Txn, request.Deps)
+	r.awaitApplied(request.Ts, request.Deps)
 
-	r.awaitCommitted(txn, deps.Deps)
-	r.awaitApplied(ts, deps.Deps)
-
-	err := r.storage.SetBatch(result)
+	err := r.storage.SetBatch(request.Result)
 	if err != nil {
 		// TODO
 	}
 
-	txnInfo := r.rs.txnInfo[txn]
+	wrap := wrapGRPCTxn(request.Txn)
 
-	txnInfo.state = message.TxnStateApplied
+	txnInfo := r.rs.getAndDeleteTxnInfo(wrap)
 
+	txnInfo.mu.Lock()
+
+	txnInfo.state = stateApplied
 	for _, ch := range txnInfo.appliesPubSub {
-		ch <- struct{}{}
+		close(ch)
 	}
 
 	txnInfo.appliesPubSub = nil
 
-	for _, k := range txnInfo.keys {
-		delete(r.rs.keyToTxns[k], txn)
-	}
+	txnInfo.mu.Unlock()
 
-	delete(r.rs.txnInfo, txn)
+	keys := txnInfo.keys
+
+	r.rs.keyToTxnsMu.Lock()
+	for _, k := range keys {
+		delete(r.rs.keyToTxns[k], wrap)
+	}
+	r.rs.keyToTxnsMu.Unlock()
 
 	return nil
 }
 
 func (r *Replica) getDependencies(
-	txn message.Transaction,
+	txn txnWrap,
 	keys []string,
-) common.Set[message.Transaction] {
-	deps := common.Set[message.Transaction]{}
+) common.Set[txnWrap] {
+	deps := common.Set[txnWrap]{}
 
+	r.rs.keyToTxnsMu.RLock()
 	for _, key := range keys {
 		txs := r.rs.keyToTxns[key]
 
 		deps.Union(txs)
 	}
+	r.rs.keyToTxnsMu.RUnlock()
 
 	delete(deps, txn)
 
 	return deps
 }
 
-func (r *Replica) awaitCommitted(origTxn message.Transaction, txns []message.Transaction) {
-	var wg sync.WaitGroup
+func (r *Replica) awaitCommitted(origTxn *rpc.Transaction, txns []*rpc.Transaction) {
+	chans := make([]chan struct{}, 0, len(txns)+1)
+	for range len(txns) + 1 {
+		chans = append(chans, make(chan struct{}))
+	}
 
-	processTxnFunc := func(tx message.Transaction) {
-		info, ok := r.rs.txnInfo[tx]
+	processTxnFunc := func(tx *rpc.Transaction, waitCh chan struct{}) {
+		wrap := wrapGRPCTxn(tx)
+
+		info, ok := r.rs.getTxnInfo(wrap)
 		if !ok {
+			close(waitCh)
+
 			return
 		}
 
-		if info.state == message.TxnStateCommitted || info.state == message.TxnStateApplied {
+		info.mu.Lock()
+		defer info.mu.Unlock()
+
+		if info.state == stateCommited || info.state == stateApplied {
+			close(waitCh)
+
 			return
 		}
-
-		wg.Add(1)
-
-		waitCh := make(chan struct{})
 
 		info.commitsPubSub = append(info.commitsPubSub, waitCh)
-
-		go func(tx message.Transaction) {
-			<-waitCh
-
-			wg.Done()
-		}(tx)
 	}
 
-	processTxnFunc(origTxn)
+	processTxnFunc(origTxn, chans[len(txns)])
 
-	for _, tx := range txns {
-		processTxnFunc(tx)
+	for i, tx := range txns {
+		processTxnFunc(tx, chans[i])
 	}
 
-	r.mu.Unlock()
-
-	wg.Wait()
-
-	r.mu.Lock()
+	<-chans[len(txns)]
+	for _, ch := range chans {
+		<-ch
+	}
 }
 
-func (r *Replica) awaitApplied(ts message.Timestamp, txns []message.Transaction) {
-	var wg sync.WaitGroup
+func (r *Replica) awaitApplied(ts *rpc.TxnTimestamp, txns []*rpc.Transaction) {
+	chans := make([]chan struct{}, 0, len(txns))
 
 	for _, tx := range txns {
-		info, ok := r.rs.txnInfo[tx]
+		wrap := wrapGRPCTxn(tx)
+
+		info, ok := r.rs.getTxnInfo(wrap)
 		if !ok {
 			continue
 		}
 
-		if info.state == message.TxnStateApplied {
+		info.mu.Lock()
+
+		if info.state == stateApplied {
+			info.mu.Unlock()
+
 			continue
 		}
 
-		if !(info.ts.Less(ts)) {
+		if !proto.TsLess(info.ts, ts) {
+			info.mu.Unlock()
+
 			continue
 		}
-
-		wg.Add(1)
 
 		waitCh := make(chan struct{})
 
 		info.appliesPubSub = append(info.appliesPubSub, waitCh)
 
-		go func(tx message.Transaction) {
-			<-waitCh
+		chans = append(chans, waitCh)
 
-			wg.Done()
-		}(tx)
+		info.mu.Unlock()
 	}
 
-	r.mu.Unlock()
-
-	wg.Wait()
-
-	r.mu.Lock()
+	for _, ch := range chans {
+		<-ch
+	}
 }
 
 func (r *Replica) Snapshot() (map[string]string, error) {

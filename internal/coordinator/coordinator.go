@@ -1,15 +1,18 @@
-package cluster
+package coordinator
 
 import (
 	"fmt"
 	"log/slog"
 	"sync"
-	"sync/atomic"
+	"time"
 
-	"github.com/eqimd/accord/internal/cluster/provider"
-	"github.com/eqimd/accord/internal/message"
+	"github.com/eqimd/accord/internal/environment"
+	"github.com/eqimd/accord/internal/query"
+	"github.com/eqimd/accord/internal/sharding"
+	"github.com/eqimd/accord/proto"
 )
 
+/*
 type monoClock struct {
 	val atomic.Uint64
 }
@@ -19,21 +22,20 @@ func (c *monoClock) getTime() uint64 {
 
 	return v
 }
+*/
 
 type Coordinator struct {
 	pid           int
-	env           provider.Environment
-	sharding      provider.Sharding
-	queryExecutor provider.QueryExecutor
-
-	clock monoClock
+	env           *environment.GRPCEnv
+	sharding      *sharding.Hash
+	queryExecutor *query.Executor
 }
 
 func NewCoordinator(
 	pid int,
-	env provider.Environment,
-	sharding provider.Sharding,
-	queryExecutor provider.QueryExecutor,
+	env *environment.GRPCEnv,
+	sharding *sharding.Hash,
+	queryExecutor *query.Executor,
 ) *Coordinator {
 	return &Coordinator{
 		pid:           pid,
@@ -44,10 +46,14 @@ func NewCoordinator(
 }
 
 func (c *Coordinator) Exec(query string) (string, error) {
-	ts0 := message.Timestamp{
-		LocalTime:   c.clock.getTime(),
-		LogicalTime: 0,
-		Pid:         c.pid,
+	local := uint64(time.Now().UnixNano())
+	logical := int32(0)
+	pid := int32(c.pid)
+
+	ts0 := &proto.TxnTimestamp{
+		LocalTime:   &local,
+		LogicalTime: &logical,
+		Pid:         &pid,
 	}
 
 	keys, err := c.queryExecutor.QueryKeys(query)
@@ -58,16 +64,16 @@ func (c *Coordinator) Exec(query string) (string, error) {
 
 	shardToKeys := c.sharding.ShardToKeys(keys)
 
-	shardToDeps := map[int][]message.Transaction{}
+	shardToDeps := map[int][]*proto.Transaction{}
 
-	var proposedMax message.Timestamp
+	proposedMax := ts0
 	ts0PerShardQuorums := map[int]struct{}{}
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
-	txn := message.Transaction{
-		TxnHash:   query,
+	txn := &proto.Transaction{
+		Hash:      &query,
 		Timestamp: ts0,
 	}
 
@@ -84,7 +90,14 @@ func (c *Coordinator) Exec(query string) (string, error) {
 			go func(shardID, rpid, replicasCount int) {
 				defer shardWg.Done()
 
-				propTs, rDeps, err := c.env.PreAccept(c.pid, rpid, txn, keys, ts0)
+				req := &proto.PreAcceptRequest{
+					Txn:    txn,
+					Ts0:    ts0,
+					Keys:   keys,
+					Sender: &pid,
+				}
+
+				resp, err := c.env.PreAccept(c.pid, rpid, req)
 				if err != nil {
 					slog.Error("preaccept error", slog.Any("error", err))
 					// TODO
@@ -93,7 +106,7 @@ func (c *Coordinator) Exec(query string) (string, error) {
 				mu.Lock()
 				defer mu.Unlock()
 
-				if propTs.Equal(ts0) {
+				if proto.TsEqual(resp.Ts, ts0) {
 					ts0ShardQuorumCnt++
 
 					if 2*ts0ShardQuorumCnt > replicasCount {
@@ -101,11 +114,11 @@ func (c *Coordinator) Exec(query string) (string, error) {
 					}
 				}
 
-				if proposedMax.Less(propTs) {
-					proposedMax = propTs
+				if proto.TsLess(proposedMax, resp.Ts) {
+					proposedMax = resp.Ts
 				}
 
-				shardToDeps[shardID] = append(shardToDeps[shardID], rDeps.Deps...)
+				shardToDeps[shardID] = append(shardToDeps[shardID], resp.Deps...)
 			}(shardID, replicaPid, len(replicaPids))
 		}
 
@@ -125,7 +138,7 @@ func (c *Coordinator) Exec(query string) (string, error) {
 		// No fast-path quorum; perform second round-trip
 
 		tsCommit = proposedMax
-		shardToDeps = map[int][]message.Transaction{}
+		shardToDeps = map[int][]*proto.Transaction{}
 
 		wg := sync.WaitGroup{}
 		mu := sync.Mutex{}
@@ -142,7 +155,14 @@ func (c *Coordinator) Exec(query string) (string, error) {
 				go func(shardID, rpid int) {
 					defer shardWg.Done()
 
-					tDeps, err := c.env.Accept(c.pid, rpid, txn, keys, tsCommit)
+					req := &proto.AcceptRequest{
+						Txn:    txn,
+						Keys:   keys,
+						Ts:     tsCommit,
+						Sender: &pid,
+					}
+
+					resp, err := c.env.Accept(c.pid, rpid, req)
 					if err != nil {
 						slog.Error("accept error", slog.Any("error", err))
 						// TODO
@@ -151,7 +171,7 @@ func (c *Coordinator) Exec(query string) (string, error) {
 					mu.Lock()
 					defer mu.Unlock()
 
-					shardToDeps[shardID] = append(shardToDeps[shardID], tDeps.Deps...)
+					shardToDeps[shardID] = append(shardToDeps[shardID], resp.Deps...)
 				}(shardID, replicaPid)
 			}
 
@@ -170,7 +190,12 @@ func (c *Coordinator) Exec(query string) (string, error) {
 
 		for replicaPid := range replicaPids {
 			go func(rpid int) {
-				err := c.env.Commit(c.pid, rpid, txn, tsCommit)
+				req := &proto.CommitRequest{
+					Txn:    txn,
+					Ts:     tsCommit,
+					Sender: &pid,
+				}
+				err := c.env.Commit(c.pid, rpid, req)
 				if err != nil {
 					slog.Error("commit error", slog.Any("error", err))
 					// TODO
@@ -188,27 +213,35 @@ func (c *Coordinator) Exec(query string) (string, error) {
 		wg.Add(1)
 
 		var replicaPid int
-		for k := range c.env.ReplicaPidsByShard(shardID) {
+		pidsByShard := c.env.ReplicaPidsByShard(shardID)
+		for k := range pidsByShard {
 			replicaPid = k
 			break
 		}
 
-		shardDeps := message.TxnDependencies{
-			Deps: shardToDeps[shardID],
+		if _, ok := pidsByShard[c.pid]; ok {
+			replicaPid = c.pid
 		}
+
+		shardDeps := shardToDeps[shardID]
 
 		keys := keys
 
 		go func() {
 			defer wg.Done()
 
+			req := &proto.ReadRequest{
+				Txn:    txn,
+				Keys:   keys,
+				Ts:     tsCommit,
+				Deps:   shardDeps,
+				Sender: &pid,
+			}
+
 			reads, err := c.env.Read(
 				c.pid,
 				replicaPid,
-				txn,
-				keys,
-				tsCommit,
-				shardDeps,
+				req,
 			)
 			if err != nil {
 				slog.Error("read error", slog.Any("error", err))
@@ -236,11 +269,17 @@ func (c *Coordinator) Exec(query string) (string, error) {
 
 		for replicaPid := range replicaPids {
 			go func(shardID, rpid int) {
-				d := message.TxnDependencies{
-					Deps: shardToDeps[shardID],
+				d := shardToDeps[shardID]
+
+				req := &proto.ApplyRequest{
+					Txn:    txn,
+					Ts:     tsCommit,
+					Deps:   d,
+					Result: writes,
+					Sender: &pid,
 				}
 
-				err := c.env.Apply(c.pid, rpid, txn, tsCommit, d, writes)
+				err := c.env.Apply(c.pid, rpid, req)
 				if err != nil {
 					slog.Error("apply error", slog.Any("error", err))
 					// TODO

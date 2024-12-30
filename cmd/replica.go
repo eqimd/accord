@@ -7,6 +7,7 @@ import (
 	"github.com/eqimd/accord/internal/cluster"
 	"github.com/eqimd/accord/internal/ports/rpc"
 	"github.com/eqimd/accord/internal/storage"
+	"github.com/eqimd/accord/proto"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 )
@@ -30,7 +31,7 @@ var replicaCmd = &cobra.Command{
 		}
 
 		grpcServer := grpc.NewServer()
-		rpc.RegisterReplicaServer(grpcServer, rpc.NewReplicaServer(replica))
+		proto.RegisterReplicaServer(grpcServer, rpc.NewReplicaServer(replica))
 
 		return grpcServer.Serve(lis)
 	},

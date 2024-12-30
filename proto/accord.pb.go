@@ -4,7 +4,7 @@
 // 	protoc        v5.29.1
 // source: accord.proto
 
-package rpc
+package proto
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"

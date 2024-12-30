@@ -2,148 +2,162 @@ package environment
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
+	"github.com/eqimd/accord/internal/cluster"
 	"github.com/eqimd/accord/internal/common"
-	"github.com/eqimd/accord/internal/message"
-	"github.com/eqimd/accord/internal/ports/rpc"
-	"golang.org/x/sync/errgroup"
+	"github.com/eqimd/accord/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 type rpcClient struct {
 	conn   *grpc.ClientConn
-	client rpc.ReplicaClient
+	client proto.ReplicaClient
 }
 
 type GRPCEnv struct {
+	mu sync.RWMutex
+
 	replicaToAddr   map[int]string
 	shardToReplicas map[int][]int
 	replicaToClient map[int]*rpcClient
+
+	curReplica *cluster.Replica
 }
 
-func NewGRPCEnv(replicaAddrToShard map[string]int) (*GRPCEnv, error) {
+func NewGRPCEnv(
+	replicaAddrToShard map[string]int,
+	curReplica *cluster.Replica,
+	curAddr string,
+	curPid int,
+) (*GRPCEnv, error) {
 	env := &GRPCEnv{
 		replicaToAddr:   make(map[int]string),
 		shardToReplicas: make(map[int][]int),
 		replicaToClient: make(map[int]*rpcClient),
+		curReplica:      curReplica,
 	}
 
-	var mu sync.Mutex
-	var errGroup errgroup.Group
-
 	for addr, shard := range replicaAddrToShard {
+		if addr == curAddr {
+			env.mu.Lock()
+
+			env.replicaToAddr[curPid] = addr
+			env.shardToReplicas[shard] = append(env.shardToReplicas[shard], curPid)
+
+			env.mu.Unlock()
+
+			continue
+		}
+
 		addr := addr
 		shard := shard
 
-		conn, err := grpc.NewClient(
-			addr,
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-		)
-		if err != nil {
-			return nil, err
-		}
+		go func() {
+			for {
+				conn, err := grpc.NewClient(
+					addr,
+					grpc.WithTransportCredentials(insecure.NewCredentials()),
+				)
+				if err != nil {
+					continue
+				}
 
-		client := rpc.NewReplicaClient(conn)
+				client := proto.NewReplicaClient(conn)
+				resp, err := client.Pid(
+					context.Background(),
+					&proto.PidRequest{},
+				)
+				if err != nil {
+					continue
+				}
 
-		errGroup.Go(func() error {
-			resp, err := client.Pid(
-				context.Background(),
-				&rpc.PidRequest{},
-			)
-			if err != nil {
-				return fmt.Errorf("error getting pid from %s: %w", addr, err)
+				pid := int(*resp.Pid)
+
+				env.mu.Lock()
+
+				env.replicaToClient[pid] = &rpcClient{
+					conn:   conn,
+					client: client,
+				}
+
+				env.replicaToAddr[pid] = addr
+				env.shardToReplicas[shard] = append(env.shardToReplicas[shard], pid)
+
+				env.mu.Unlock()
+
+				break
 			}
-
-			pid := int(*resp.Pid)
-
-			mu.Lock()
-
-			env.replicaToClient[pid] = &rpcClient{
-				conn:   conn,
-				client: client,
-			}
-
-			env.replicaToAddr[pid] = addr
-			env.shardToReplicas[shard] = append(env.shardToReplicas[shard], pid)
-
-			mu.Unlock()
-
-			return nil
-		})
+		}()
 	}
 
-	err := errGroup.Wait()
-
-	return env, err
+	return env, nil
 }
 
 // TODO add context to env
 
 func (e *GRPCEnv) PreAccept(
 	from, to int,
-	txn message.Transaction,
-	keys []string,
-	ts0 message.Timestamp,
-) (message.Timestamp, message.TxnDependencies, error) {
-	sender := int32(from)
+	req *proto.PreAcceptRequest,
+) (*proto.PreAcceptResponse, error) {
+	if from == to {
+		return e.curReplica.PreAccept(
+			from,
+			req,
+		)
+	}
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 
 	resp, err := e.replicaToClient[to].client.PreAccept(
 		context.Background(),
-		&rpc.PreAcceptRequest{
-			Txn:    rpc.TxnToGrpc(&txn),
-			Keys:   keys,
-			Ts0:    rpc.TsToGrpc(&ts0),
-			Sender: &sender,
-		},
+		req,
 	)
-	if err != nil {
-		return message.Timestamp{}, message.TxnDependencies{}, err
-	}
 
-	return rpc.TsFromGrpc(resp.Ts), rpc.DepsFromGrpc(resp.Deps), err
+	return resp, err
 }
 
 func (e *GRPCEnv) Accept(
 	from, to int,
-	txn message.Transaction,
-	keys []string,
-	ts message.Timestamp,
-) (message.TxnDependencies, error) {
-	sender := int32(from)
+	req *proto.AcceptRequest,
+) (*proto.AcceptResponse, error) {
+	if from == to {
+		return e.curReplica.Accept(
+			from,
+			req,
+		)
+	}
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 
 	resp, err := e.replicaToClient[to].client.Accept(
 		context.Background(),
-		&rpc.AcceptRequest{
-			Txn:    rpc.TxnToGrpc(&txn),
-			Keys:   keys,
-			Ts:     rpc.TsToGrpc(&ts),
-			Sender: &sender,
-		},
+		req,
 	)
-	if err != nil {
-		return message.TxnDependencies{}, err
-	}
 
-	return rpc.DepsFromGrpc(resp.Deps), nil
+	return resp, err
 }
 
 func (e *GRPCEnv) Commit(
 	from, to int,
-	txn message.Transaction,
-	ts message.Timestamp,
+	req *proto.CommitRequest,
 ) error {
-	sender := int32(from)
+	if from == to {
+		return e.curReplica.Commit(
+			from,
+			req,
+		)
+	}
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 
 	_, err := e.replicaToClient[to].client.Commit(
 		context.Background(),
-		&rpc.CommitRequest{
-			Txn:    rpc.TxnToGrpc(&txn),
-			Ts:     rpc.TsToGrpc(&ts),
-			Sender: &sender,
-		},
+		req,
 	)
 
 	return err
@@ -151,53 +165,51 @@ func (e *GRPCEnv) Commit(
 
 func (e *GRPCEnv) Read(
 	from, to int,
-	txn message.Transaction,
-	keys []string,
-	ts message.Timestamp,
-	deps message.TxnDependencies,
+	req *proto.ReadRequest,
 ) (map[string]string, error) {
-	sender := int32(from)
+	if from == to {
+		return e.curReplica.Read(
+			from,
+			req,
+		)
+	}
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 
 	resp, err := e.replicaToClient[to].client.Read(
 		context.Background(),
-		&rpc.ReadRequest{
-			Txn:    rpc.TxnToGrpc(&txn),
-			Keys:   keys,
-			Ts:     rpc.TsToGrpc(&ts),
-			Deps:   rpc.DepsToGrpc(&deps),
-			Sender: &sender,
-		},
+		req,
 	)
-	if err != nil {
-		return nil, err
-	}
 
-	return resp.Reads, nil
+	return resp.Reads, err
 }
 
 func (e *GRPCEnv) Apply(
 	from, to int,
-	txn message.Transaction,
-	ts message.Timestamp,
-	deps message.TxnDependencies,
-	result map[string]string,
+	req *proto.ApplyRequest,
 ) error {
-	sender := int32(from)
+	if from == to {
+		return e.curReplica.Apply(
+			from,
+			req,
+		)
+	}
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 
 	_, err := e.replicaToClient[to].client.Apply(
 		context.Background(),
-		&rpc.ApplyRequest{
-			Txn:    rpc.TxnToGrpc(&txn),
-			Ts:     rpc.TsToGrpc(&ts),
-			Deps:   rpc.DepsToGrpc(&deps),
-			Result: result,
-			Sender: &sender,
-		},
+		req,
 	)
 
 	return err
 }
 
 func (e *GRPCEnv) ReplicaPidsByShard(shardID int) common.Set[int] {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
 	return common.SetFromSlice(e.shardToReplicas[shardID])
 }

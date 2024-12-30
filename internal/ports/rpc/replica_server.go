@@ -5,10 +5,11 @@ import (
 	"fmt"
 
 	"github.com/eqimd/accord/internal/cluster"
+	"github.com/eqimd/accord/proto"
 )
 
 type replicaServer struct {
-	UnimplementedReplicaServer
+	proto.UnimplementedReplicaServer
 
 	replica *cluster.Replica
 }
@@ -19,81 +20,65 @@ func NewReplicaServer(replica *cluster.Replica) *replicaServer {
 	}
 }
 
-func (s *replicaServer) PreAccept(ctx context.Context, req *PreAcceptRequest) (*PreAcceptResponse, error) {
-	ts, deps, err := s.replica.PreAccept(
+func (s *replicaServer) PreAccept(ctx context.Context, req *proto.PreAcceptRequest) (*proto.PreAcceptResponse, error) {
+	resp, err := s.replica.PreAccept(
 		int(*req.Sender),
-		TxnFromGrpc(req.Txn),
-		req.Keys,
-		TsFromGrpc(req.Ts0),
+		req,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cannot pre accept: %w", err)
 	}
 
-	resp := &PreAcceptResponse{
-		Ts:   TsToGrpc(&ts),
-		Deps: DepsToGrpc(&deps),
-	}
-
 	return resp, nil
 }
 
-func (s *replicaServer) Accept(ctx context.Context, req *AcceptRequest) (*AcceptResponse, error) {
-	deps, err := s.replica.Accept(
+func (s *replicaServer) Accept(ctx context.Context, req *proto.AcceptRequest) (*proto.AcceptResponse, error) {
+	resp, err := s.replica.Accept(
 		int(*req.Sender),
-		TxnFromGrpc(req.Txn),
-		req.Keys,
-		TsFromGrpc(req.Ts),
+		req,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("cannot accept: %w", err)
 	}
 
-	return &AcceptResponse{Deps: DepsToGrpc(&deps)}, nil
+	return resp, nil
 }
 
-func (s *replicaServer) Commit(ctx context.Context, req *CommitRequest) (*CommitResponse, error) {
+func (s *replicaServer) Commit(ctx context.Context, req *proto.CommitRequest) (*proto.CommitResponse, error) {
 	err := s.replica.Commit(
 		int(*req.Sender),
-		TxnFromGrpc(req.Txn),
-		TsFromGrpc(req.Ts),
+		req,
 	)
 
-	return &CommitResponse{}, err
+	return &proto.CommitResponse{}, err
 }
 
-func (s *replicaServer) Read(ctx context.Context, req *ReadRequest) (*ReadResponse, error) {
+func (s *replicaServer) Read(ctx context.Context, req *proto.ReadRequest) (*proto.ReadResponse, error) {
 	reads, err := s.replica.Read(
 		int(*req.Sender),
-		TxnFromGrpc(req.Txn),
-		req.Keys,
-		TsFromGrpc(req.Ts),
-		DepsFromGrpc(req.Deps),
+		req,
 	)
 
-	return &ReadResponse{Reads: reads}, err
+	return &proto.ReadResponse{Reads: reads}, err
 }
 
-func (s *replicaServer) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResponse, error) {
+func (s *replicaServer) Apply(ctx context.Context, req *proto.ApplyRequest) (*proto.ApplyResponse, error) {
 	err := s.replica.Apply(
 		int(*req.Sender),
-		TxnFromGrpc(req.Txn),
-		TsFromGrpc(req.Ts),
-		DepsFromGrpc(req.Deps),
-		req.Result,
+		req,
 	)
 
-	return &ApplyResponse{}, err
+	return &proto.ApplyResponse{}, err
 }
 
-func (s *replicaServer) Pid(ctx context.Context, req *PidRequest) (*PidResponse, error) {
+func (s *replicaServer) Pid(ctx context.Context, req *proto.PidRequest) (*proto.PidResponse, error) {
 	pid := int32(s.replica.Pid())
 
-	return &PidResponse{Pid: &pid}, nil
+	return &proto.PidResponse{Pid: &pid}, nil
 }
 
-func (s *replicaServer) Snapshot(ctx context.Context, req *SnapshotRequest) (*SnapshotResponse, error) {
+func (s *replicaServer) Snapshot(ctx context.Context, req *proto.SnapshotRequest) (*proto.SnapshotResponse, error) {
 	snapshot, err := s.replica.Snapshot()
 
-	return &SnapshotResponse{Result: snapshot}, err
+	return &proto.SnapshotResponse{Result: snapshot}, err
 }
