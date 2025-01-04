@@ -1,4 +1,4 @@
-option go_package = "github.com/eqimd/accord/internal/ports/rpc";
+option go_package = "github.com/eqimd/accord/proto";
 
 message Transaction {
     required string hash = 1;
@@ -94,6 +94,22 @@ message ExecuteResponse {
     required string result = 1;
 }
 
+message PutRequest {
+    map<string, string> vals = 1;
+}
+
+message PutResponse {}
+
+message GetRequest {
+    repeated string keys = 1;
+}
+
+message GetResponse {
+    map<string, string> result = 1;
+}
+
 service Coordinator {
     rpc Execute(ExecuteRequest) returns (ExecuteResponse) {}
+    rpc Put(PutRequest) returns (PutResponse) {}
+    rpc Get(GetRequest) returns (GetResponse) {}
 }

@@ -1,4 +1,4 @@
-package cluster
+package replica
 
 import "github.com/eqimd/accord/proto"
 

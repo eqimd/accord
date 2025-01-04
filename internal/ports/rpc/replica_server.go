@@ -4,17 +4,17 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/eqimd/accord/internal/cluster"
+	"github.com/eqimd/accord/internal/replica"
 	"github.com/eqimd/accord/proto"
 )
 
 type replicaServer struct {
 	proto.UnimplementedReplicaServer
 
-	replica *cluster.Replica
+	replica *replica.Replica
 }
 
-func NewReplicaServer(replica *cluster.Replica) *replicaServer {
+func NewReplicaServer(replica *replica.Replica) *replicaServer {
 	return &replicaServer{
 		replica: replica,
 	}

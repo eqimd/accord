@@ -4,7 +4,7 @@ import (
 	"net"
 	"os"
 
-	"github.com/eqimd/accord/internal/cluster"
+	"github.com/eqimd/accord/internal/replica"
 	"github.com/eqimd/accord/internal/ports/rpc"
 	"github.com/eqimd/accord/internal/storage"
 	"github.com/eqimd/accord/proto"
@@ -23,7 +23,7 @@ var replicaCmd = &cobra.Command{
 		addr := args[0]
 		storage := storage.NewInMemory()
 
-		replica := cluster.NewReplica(os.Getpid(), storage)
+		replica := replica.NewReplica(os.Getpid(), storage)
 
 		lis, err := net.Listen("tcp", addr)
 		if err != nil {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/eqimd/accord/internal/cluster"
+	"github.com/eqimd/accord/internal/replica"
 	"github.com/eqimd/accord/internal/common"
 	"github.com/eqimd/accord/proto"
 	"google.golang.org/grpc"
@@ -23,12 +23,12 @@ type GRPCEnv struct {
 	shardToReplicas map[int][]int
 	replicaToClient map[int]*rpcClient
 
-	curReplica *cluster.Replica
+	curReplica *replica.Replica
 }
 
 func NewGRPCEnv(
 	replicaAddrToShard map[string]int,
-	curReplica *cluster.Replica,
+	curReplica *replica.Replica,
 	curAddr string,
 	curPid int,
 ) (*GRPCEnv, error) {

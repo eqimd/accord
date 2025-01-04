@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/eqimd/accord/cmd/config"
-	"github.com/eqimd/accord/internal/cluster"
+	"github.com/eqimd/accord/internal/replica"
 	"github.com/eqimd/accord/internal/common"
 	"github.com/eqimd/accord/internal/coordinator"
 	"github.com/eqimd/accord/internal/environment"
@@ -31,7 +31,7 @@ var coordinatorCmd = &cobra.Command{
 		addr := args[1]
 
 		storage := storage.NewInMemory()
-		replica := cluster.NewReplica(os.Getpid(), storage)
+		replica := replica.NewReplica(os.Getpid(), storage)
 
 		b, err := os.ReadFile(configPath)
 		if err != nil {

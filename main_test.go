@@ -68,18 +68,20 @@ func runTest() {
 		go func() {
 			defer wg.Done()
 
+			st := seededRand.Intn(100)
+
+			time.Sleep(time.Duration(st) * time.Millisecond)
+
 			pos1 := rand.Int() % len(keys)
 
 			key1 := keys[pos1]
 
 			val1 := RandomString(10)
 
-			q := fmt.Sprintf(`let val1 = SET("%s", "%s"); val1`, key1, val1)
-
-			coordPos := rand.Int() % len(coordinators)
+			coordPos := seededRand.Intn(len(coordinators))
 			coordClient := rpcClients[coordPos]
 
-			_, err := coordinatorExec(coordClient, q)
+			err := coordinatorExec(coordClient, key1, val1)
 			if err != nil {
 				panic(err)
 			}
@@ -92,24 +94,19 @@ func runTest() {
 
 	qps := float64(runsCount) / (float64(end.Sub(start)) / float64(time.Second))
 	fmt.Println("QPS:", qps)
-
-	time.Sleep(10 * time.Second)
-
-	fmt.Println()
 }
 
-func coordinatorExec(client proto.CoordinatorClient, query string) (string, error) {
-	resp, err := client.Execute(
+func coordinatorExec(client proto.CoordinatorClient, key, val string) error {
+	_, err := client.Put(
 		context.Background(),
-		&proto.ExecuteRequest{
-			Query: &query,
+		&proto.PutRequest{
+			Vals: map[string]string{
+				key: val,
+			},
 		},
 	)
-	if err != nil {
-		return "", err
-	}
 
-	return *resp.Result, nil
+	return err
 }
 
 func TestMain(t *testing.T) {
