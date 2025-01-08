@@ -83,15 +83,10 @@ func (c *Coordinator) proposeTransaction(
 		replicaPids := c.env.ReplicaPidsByShard(shardID)
 		wg.Add(1)
 
-		var shardWg sync.WaitGroup
-		ts0ShardQuorumCnt := 0
+		shardChan := make(chan *proto.PreAcceptResponse, len(replicaPids))
 
 		for replicaPid := range replicaPids {
-			shardWg.Add(1)
-
 			go func(shardID, rpid, replicasCount int) {
-				defer shardWg.Done()
-
 				req := &proto.PreAcceptRequest{
 					Txn:    txn,
 					Ts0:    ts0,
@@ -105,8 +100,18 @@ func (c *Coordinator) proposeTransaction(
 					// TODO
 				}
 
+				shardChan <- resp
+			}(shardID, replicaPid, len(replicaPids))
+		}
+
+		go func(replicasCount int) {
+			respCount := 0
+			ts0ShardQuorumCnt := 0
+
+			for resp := range shardChan {
+				respCount++
+
 				mu.Lock()
-				defer mu.Unlock()
 
 				if proto.TsEqual(resp.Ts, ts0) {
 					ts0ShardQuorumCnt++
@@ -121,14 +126,16 @@ func (c *Coordinator) proposeTransaction(
 				}
 
 				shardToDeps[shardID] = append(shardToDeps[shardID], resp.Deps...)
-			}(shardID, replicaPid, len(replicaPids))
-		}
 
-		go func() {
-			shardWg.Wait()
+				defer mu.Unlock()
+
+				if 2*respCount > replicasCount {
+					break
+				}
+			}
 
 			wg.Done()
-		}()
+		}(len(replicaPids))
 	}
 
 	wg.Wait()
@@ -152,14 +159,10 @@ func (c *Coordinator) proposeTransaction(
 			replicaPids := c.env.ReplicaPidsByShard(shardID)
 			wg.Add(1)
 
-			var shardWg sync.WaitGroup
+			shardChan := make(chan *proto.AcceptResponse, len(replicaPids))
 
 			for replicaPid := range replicaPids {
-				shardWg.Add(1)
-
 				go func(shardID, rpid int) {
-					defer shardWg.Done()
-
 					req := &proto.AcceptRequest{
 						Txn:    txn,
 						Keys:   keys,
@@ -173,18 +176,29 @@ func (c *Coordinator) proposeTransaction(
 						// TODO
 					}
 
-					mu.Lock()
-					defer mu.Unlock()
-
-					shardToDeps[shardID] = append(shardToDeps[shardID], resp.Deps...)
+					shardChan <- resp
 				}(shardID, replicaPid)
 			}
 
-			go func() {
-				shardWg.Wait()
+			go func(replicasCount int) {
+				respCount := 0
+
+				for resp := range shardChan {
+					respCount++
+
+					mu.Lock()
+
+					shardToDeps[shardID] = append(shardToDeps[shardID], resp.Deps...)
+
+					mu.Unlock()
+
+					if 2*respCount > replicasCount {
+						break
+					}
+				}
 
 				wg.Done()
-			}()
+			}(len(replicaPids))
 		}
 
 		wg.Wait()
