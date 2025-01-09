@@ -127,7 +127,7 @@ func (c *Coordinator) proposeTransaction(
 
 				shardToDeps[shardID] = append(shardToDeps[shardID], resp.Deps...)
 
-				defer mu.Unlock()
+				mu.Unlock()
 
 				if 2*respCount > replicasCount {
 					break

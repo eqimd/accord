@@ -34,7 +34,7 @@ func RandomString(length int) string {
 func runTest() {
 	coordinators := []string{
 		"localhost:5000",
-		"localhost:6000",
+		// "localhost:6000",
 		// "localhost:7000",
 	}
 
@@ -68,9 +68,9 @@ func runTest() {
 		go func() {
 			defer wg.Done()
 
-			st := seededRand.Intn(100)
+			// st := seededRand.Intn(100)
 
-			time.Sleep(time.Duration(st) * time.Millisecond)
+			// time.Sleep(time.Duration(st) * time.Millisecond)
 
 			pos1 := rand.Int() % len(keys)
 
@@ -116,5 +116,5 @@ func TestMain(t *testing.T) {
 
 	end := time.Now()
 
-	fmt.Println(end.Sub(start))
+	fmt.Println("Time:", end.Sub(start))
 }
