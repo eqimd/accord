@@ -4,9 +4,10 @@ import (
 	"context"
 	"sync"
 
-	"github.com/eqimd/accord/internal/replica"
 	"github.com/eqimd/accord/internal/common"
+	"github.com/eqimd/accord/internal/replica"
 	"github.com/eqimd/accord/proto"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -216,7 +217,6 @@ func (e *GRPCEnv) ReplicaPidsByShard(shardID int) common.Set[int] {
 
 type SnapshotAll struct {
 	Shards map[int]*SnapshotShard
-	Values map[string]string
 }
 
 type SnapshotShard struct {
@@ -224,12 +224,60 @@ type SnapshotShard struct {
 }
 
 type SnapshotReplica struct {
-	
+	Values map[string]string
 }
 
-func (e *GRPCEnv) SnapshotAll(from int) (map[string]string, error) {
+func (e *GRPCEnv) SnapshotAll(from int) (*SnapshotAll, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	return e.replicaToClient[to].client.Apply()
+	ctx := context.Background()
+	mu := sync.Mutex{}
+
+	snapshotAll := &SnapshotAll{
+		Shards: map[int]*SnapshotShard{},
+	}
+
+	var errGroup errgroup.Group
+
+	for shard, replicas := range e.shardToReplicas {
+		shard := shard
+		replicas := replicas
+
+		for _, rPid := range replicas {
+			rPid := rPid
+
+			errGroup.Go(func() error {
+				var snsh map[string]string
+
+				if from == rPid {
+					snsh, _ = e.curReplica.Snapshot()
+				} else {
+					resp, err := e.replicaToClient[rPid].client.Snapshot(ctx, &proto.SnapshotRequest{})
+					if err != nil {
+						return err
+					}
+
+					snsh = resp.Result
+				}
+
+				mu.Lock()
+				defer mu.Unlock()
+
+				if _, ok := snapshotAll.Shards[shard]; !ok {
+					snapshotAll.Shards[shard] = &SnapshotShard{
+						Replicas: make(map[int]*SnapshotReplica),
+					}
+				}
+
+				snapshotAll.Shards[shard].Replicas[rPid] = &SnapshotReplica{
+					Values: snsh,
+				}
+
+				return nil
+			})
+		}
+	}
+
+	return snapshotAll, errGroup.Wait()
 }

@@ -117,7 +117,7 @@ func (c *Coordinator) proposeTransaction(
 
 				mu.Unlock()
 
-				if 2*respCount > replicasCount {
+				if respCount == replicasCount {
 					break
 				}
 			}
@@ -180,7 +180,7 @@ func (c *Coordinator) proposeTransaction(
 
 					mu.Unlock()
 
-					if 2*respCount > replicasCount {
+					if respCount == replicasCount {
 						break
 					}
 				}
@@ -422,6 +422,6 @@ func (c *Coordinator) Get(keys []string) (map[string]string, error) {
 	return allReads, nil
 }
 
-func (c *Coordinator) Snapshot() (*Snapshot, error) {
-	c.r
+func (c *Coordinator) Snapshot() (*environment.SnapshotAll, error) {
+	return c.env.SnapshotAll(c.pid)
 }

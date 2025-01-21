@@ -38,3 +38,30 @@ func (s *coordinatorServer) Get(ctx context.Context, req *proto.GetRequest) (*pr
 		Result: reads,
 	}, err
 }
+
+func (s *coordinatorServer) Snapshot(ctx context.Context, req *proto.SnapshotAllRequest) (*proto.SnapshotAllResponse, error) {
+	snshAll, err := s.coordinator.Snapshot()
+	if err != nil {
+		return &proto.SnapshotAllResponse{}, err
+	}
+
+	resp := &proto.SnapshotAllResponse{
+		Shards: make(map[int32]*proto.SnapshotShard),
+	}
+
+	for shard, replicas := range snshAll.Shards {
+		shardCasted := int32(shard)
+
+		resp.Shards[shardCasted] = &proto.SnapshotShard{
+			Replicas: make(map[int32]*proto.SnapshotKV),
+		}
+
+		for rPid, srep := range replicas.Replicas {
+			resp.Shards[shardCasted].Replicas[int32(rPid)] = &proto.SnapshotKV{
+				Values: srep.Values,
+			}
+		}
+	}
+
+	return resp, nil
+}
