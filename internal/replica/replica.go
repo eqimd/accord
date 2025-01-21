@@ -23,12 +23,11 @@ type Replica struct {
 	pid     int32
 	storage *storage.InMemory
 
+	mu sync.Mutex
 	rs *replicaState
 }
 
 type txnInfo struct {
-	mu sync.RWMutex
-
 	ts0           *rpc.TxnTimestamp
 	ts            *rpc.TxnTimestamp
 	highestTs     *rpc.TxnTimestamp
@@ -40,38 +39,38 @@ type txnInfo struct {
 
 type replicaState struct {
 	// mapping of: key -> transactions using this key
-	keyToTxnsMu sync.RWMutex
-	keyToTxns   map[string]common.Set[txnWrap]
+	keyToTxns map[string]common.Set[txnWrap]
 
-	txnInfo sync.Map
-	// txnInfo map[message.Transaction]*txnInfo
+	// txnInfo sync.Map
+	txnInfo map[txnWrap]*txnInfo
 }
 
-func (rs *replicaState) getTxnInfo(txn txnWrap) (*txnInfo, bool) {
-	var ptr *txnInfo
+// func (rs *replicaState) getTxnInfo(txn txnWrap) (*txnInfo, bool) {
+// 	var ptr *txnInfo
 
-	val, ok := rs.txnInfo.Load(txn)
+// 	val, ok := rs.txnInfo.Load(txn)
 
-	if ok {
-		ptr = val.(*txnInfo)
-	}
+// 	if ok {
+// 		ptr = val.(*txnInfo)
+// 	}
 
-	return ptr, ok
-}
+// 	return ptr, ok
+// }
 
-func (rs *replicaState) getAndDeleteTxnInfo(txn txnWrap) *txnInfo {
-	val, _ := rs.txnInfo.LoadAndDelete(txn)
+// func (rs *replicaState) getAndDeleteTxnInfo(txn txnWrap) *txnInfo {
+// 	val, _ := rs.txnInfo.LoadAndDelete(txn)
 
-	return val.(*txnInfo)
-}
+// 	return val.(*txnInfo)
+// }
 
-func (rs *replicaState) setTxnInfo(txn txnWrap, info *txnInfo) {
-	rs.txnInfo.Store(txn, info)
-}
+// func (rs *replicaState) setTxnInfo(txn txnWrap, info *txnInfo) {
+// 	rs.txnInfo.Store(txn, info)
+// }
 
 func newReplicaState() *replicaState {
 	return &replicaState{
 		keyToTxns: make(map[string]common.Set[txnWrap]),
+		txnInfo:   map[txnWrap]*txnInfo{},
 	}
 }
 
@@ -92,6 +91,9 @@ func (r *Replica) PreAccept(
 	sender int,
 	request *rpc.PreAcceptRequest,
 ) (*rpc.PreAcceptResponse, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	ts0 := request.Ts0
 	proposedTs := ts0
 
@@ -102,18 +104,14 @@ func (r *Replica) PreAccept(
 	maxHighest := ts0
 
 	for depTx := range txDeps {
-		info, ok := r.rs.getTxnInfo(depTx)
+		info, ok := r.rs.txnInfo[depTx]
 		if !ok {
 			continue
 		}
 
-		info.mu.RLock()
-
 		if proto.TsLess(maxHighest, info.highestTs) {
 			maxHighest = info.highestTs
 		}
-
-		info.mu.RUnlock()
 	}
 
 	if !proto.TsEqual(maxHighest, ts0) {
@@ -133,24 +131,19 @@ func (r *Replica) PreAccept(
 		keys:      request.Keys,
 	}
 
-	r.rs.setTxnInfo(txn, info)
+	r.rs.txnInfo[txn] = info
 
 	for tx := range txDeps {
-		info, ok := r.rs.getTxnInfo(tx)
+		info, ok := r.rs.txnInfo[tx]
 		if !ok {
 			continue
 		}
 
-		info.mu.RLock()
-
 		if !proto.TsLess(info.ts0, ts0) {
 			delete(txDeps, tx)
 		}
-
-		info.mu.RUnlock()
 	}
 
-	r.rs.keyToTxnsMu.Lock()
 	for _, key := range request.Keys {
 		if _, ok := r.rs.keyToTxns[key]; !ok {
 			r.rs.keyToTxns[key] = make(common.Set[txnWrap])
@@ -158,7 +151,6 @@ func (r *Replica) PreAccept(
 
 		r.rs.keyToTxns[key].Add(txn)
 	}
-	r.rs.keyToTxnsMu.Unlock()
 
 	deps := make([]*proto.Transaction, 0, len(txDeps))
 	for d := range txDeps {
@@ -179,10 +171,11 @@ func (r *Replica) Accept(
 	sender int,
 	request *rpc.AcceptRequest,
 ) (*rpc.AcceptResponse, error) {
-	txn := wrapGRPCTxn(request.Txn)
-	txnInfo, _ := r.rs.getTxnInfo(txn)
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	txnInfo.mu.Lock()
+	txn := wrapGRPCTxn(request.Txn)
+	txnInfo := r.rs.txnInfo[txn]
 
 	if proto.TsLess(txnInfo.highestTs, request.Ts) {
 		txnInfo.highestTs = request.Ts
@@ -200,23 +193,17 @@ func (r *Replica) Accept(
 
 	txnInfo.state = stateAccepted
 
-	txnInfo.mu.Unlock()
-
 	txnDeps := r.getDependencies(txn, request.Keys)
 
 	for tx := range txnDeps {
-		info, ok := r.rs.getTxnInfo(tx)
+		info, ok := r.rs.txnInfo[tx]
 		if !ok {
 			continue
 		}
 
-		info.mu.RLock()
-
 		if !proto.TsLess(info.ts0, request.Ts) {
 			txnDeps.Remove(tx)
 		}
-
-		info.mu.RUnlock()
 	}
 
 	deps := make([]*proto.Transaction, 0, len(txnDeps))
@@ -235,11 +222,11 @@ func (r *Replica) Commit(
 	sender int,
 	request *rpc.CommitRequest,
 ) error {
-	txn := wrapGRPCTxn(request.Txn)
-	txnInfo, _ := r.rs.getTxnInfo(txn)
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	txnInfo.mu.Lock()
-	defer txnInfo.mu.Unlock()
+	txn := wrapGRPCTxn(request.Txn)
+	txnInfo := r.rs.txnInfo[txn]
 
 	txnInfo.ts = request.Ts
 	txnInfo.state = stateCommited
@@ -257,6 +244,9 @@ func (r *Replica) Read(
 	sender int,
 	request *rpc.ReadRequest,
 ) (map[string]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.awaitCommitted(request.Txn, request.Deps)
 	r.awaitApplied(request.Ts, request.Deps)
 
@@ -277,6 +267,9 @@ func (r *Replica) Apply(
 	sender int,
 	request *rpc.ApplyRequest,
 ) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.awaitCommitted(request.Txn, request.Deps)
 	r.awaitApplied(request.Ts, request.Deps)
 
@@ -287,9 +280,8 @@ func (r *Replica) Apply(
 
 	wrap := wrapGRPCTxn(request.Txn)
 
-	txnInfo := r.rs.getAndDeleteTxnInfo(wrap)
-
-	txnInfo.mu.Lock()
+	txnInfo := r.rs.txnInfo[wrap]
+	delete(r.rs.txnInfo, wrap)
 
 	txnInfo.state = stateApplied
 	for _, ch := range txnInfo.appliesPubSub {
@@ -298,15 +290,11 @@ func (r *Replica) Apply(
 
 	txnInfo.appliesPubSub = nil
 
-	txnInfo.mu.Unlock()
-
 	keys := txnInfo.keys
 
-	r.rs.keyToTxnsMu.Lock()
 	for _, k := range keys {
 		delete(r.rs.keyToTxns[k], wrap)
 	}
-	r.rs.keyToTxnsMu.Unlock()
 
 	return nil
 }
@@ -317,13 +305,11 @@ func (r *Replica) getDependencies(
 ) common.Set[txnWrap] {
 	deps := common.Set[txnWrap]{}
 
-	r.rs.keyToTxnsMu.RLock()
 	for _, key := range keys {
 		txs := r.rs.keyToTxns[key]
 
 		deps.Union(txs)
 	}
-	r.rs.keyToTxnsMu.RUnlock()
 
 	delete(deps, txn)
 
@@ -339,15 +325,12 @@ func (r *Replica) awaitCommitted(origTxn *rpc.Transaction, txns []*rpc.Transacti
 	processTxnFunc := func(tx *rpc.Transaction, waitCh chan struct{}) {
 		wrap := wrapGRPCTxn(tx)
 
-		info, ok := r.rs.getTxnInfo(wrap)
+		info, ok := r.rs.txnInfo[wrap]
 		if !ok {
 			close(waitCh)
 
 			return
 		}
-
-		info.mu.Lock()
-		defer info.mu.Unlock()
 
 		if info.state == stateCommited || info.state == stateApplied {
 			close(waitCh)
@@ -364,10 +347,14 @@ func (r *Replica) awaitCommitted(origTxn *rpc.Transaction, txns []*rpc.Transacti
 		processTxnFunc(tx, chans[i])
 	}
 
+	r.mu.Unlock()
+
 	<-chans[len(txns)]
 	for _, ch := range chans {
 		<-ch
 	}
+
+	r.mu.Lock()
 }
 
 func (r *Replica) awaitApplied(ts *rpc.TxnTimestamp, txns []*rpc.Transaction) {
@@ -376,22 +363,16 @@ func (r *Replica) awaitApplied(ts *rpc.TxnTimestamp, txns []*rpc.Transaction) {
 	for _, tx := range txns {
 		wrap := wrapGRPCTxn(tx)
 
-		info, ok := r.rs.getTxnInfo(wrap)
+		info, ok := r.rs.txnInfo[wrap]
 		if !ok {
 			continue
 		}
 
-		info.mu.Lock()
-
 		if info.state == stateApplied {
-			info.mu.Unlock()
-
 			continue
 		}
 
 		if !proto.TsLess(info.ts, ts) {
-			info.mu.Unlock()
-
 			continue
 		}
 
@@ -400,13 +381,15 @@ func (r *Replica) awaitApplied(ts *rpc.TxnTimestamp, txns []*rpc.Transaction) {
 		info.appliesPubSub = append(info.appliesPubSub, waitCh)
 
 		chans = append(chans, waitCh)
-
-		info.mu.Unlock()
 	}
+
+	r.mu.Unlock()
 
 	for _, ch := range chans {
 		<-ch
 	}
+
+	r.mu.Lock()
 }
 
 func (r *Replica) Snapshot() (map[string]string, error) {

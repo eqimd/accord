@@ -118,21 +118,14 @@ func runTest() {
 }
 
 func coordinatorExec(client proto.CoordinatorClient, key, val string) error {
-	query := fmt.Sprintf("let x = SET(\"%s\", \"%s\"); x", key, val)
-	_, err := client.Execute(
+	_, err := client.Put(
 		context.Background(),
-		&proto.ExecuteRequest{
-			Query: &query,
+		&proto.PutRequest{
+			Vals: map[string]string{
+				key: val,
+			},
 		},
 	)
-	// _, err := client.Put(
-	// 	context.Background(),
-	// 	&proto.PutRequest{
-	// 		Vals: map[string]string{
-	// 			key: val,
-	// 		},
-	// 	},
-	// )
 
 	return err
 }
