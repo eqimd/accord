@@ -213,3 +213,23 @@ func (e *GRPCEnv) ReplicaPidsByShard(shardID int) common.Set[int] {
 
 	return common.SetFromSlice(e.shardToReplicas[shardID])
 }
+
+type SnapshotAll struct {
+	Shards map[int]*SnapshotShard
+	Values map[string]string
+}
+
+type SnapshotShard struct {
+	Replicas map[int]*SnapshotReplica
+}
+
+type SnapshotReplica struct {
+	
+}
+
+func (e *GRPCEnv) SnapshotAll(from int) (map[string]string, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	return e.replicaToClient[to].client.Apply()
+}

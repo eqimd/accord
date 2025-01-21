@@ -349,9 +349,10 @@ var Replica_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	Coordinator_Execute_FullMethodName = "/Coordinator/Execute"
-	Coordinator_Put_FullMethodName     = "/Coordinator/Put"
-	Coordinator_Get_FullMethodName     = "/Coordinator/Get"
+	Coordinator_Execute_FullMethodName  = "/Coordinator/Execute"
+	Coordinator_Put_FullMethodName      = "/Coordinator/Put"
+	Coordinator_Get_FullMethodName      = "/Coordinator/Get"
+	Coordinator_Snapshot_FullMethodName = "/Coordinator/Snapshot"
 )
 
 // CoordinatorClient is the client API for Coordinator service.
@@ -361,6 +362,7 @@ type CoordinatorClient interface {
 	Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (*ExecuteResponse, error)
 	Put(ctx context.Context, in *PutRequest, opts ...grpc.CallOption) (*PutResponse, error)
 	Get(ctx context.Context, in *GetRequest, opts ...grpc.CallOption) (*GetResponse, error)
+	Snapshot(ctx context.Context, in *SnapshotAllRequest, opts ...grpc.CallOption) (*SnapshotAllResponse, error)
 }
 
 type coordinatorClient struct {
@@ -401,6 +403,16 @@ func (c *coordinatorClient) Get(ctx context.Context, in *GetRequest, opts ...grp
 	return out, nil
 }
 
+func (c *coordinatorClient) Snapshot(ctx context.Context, in *SnapshotAllRequest, opts ...grpc.CallOption) (*SnapshotAllResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SnapshotAllResponse)
+	err := c.cc.Invoke(ctx, Coordinator_Snapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CoordinatorServer is the server API for Coordinator service.
 // All implementations must embed UnimplementedCoordinatorServer
 // for forward compatibility.
@@ -408,6 +420,7 @@ type CoordinatorServer interface {
 	Execute(context.Context, *ExecuteRequest) (*ExecuteResponse, error)
 	Put(context.Context, *PutRequest) (*PutResponse, error)
 	Get(context.Context, *GetRequest) (*GetResponse, error)
+	Snapshot(context.Context, *SnapshotAllRequest) (*SnapshotAllResponse, error)
 	mustEmbedUnimplementedCoordinatorServer()
 }
 
@@ -426,6 +439,9 @@ func (UnimplementedCoordinatorServer) Put(context.Context, *PutRequest) (*PutRes
 }
 func (UnimplementedCoordinatorServer) Get(context.Context, *GetRequest) (*GetResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Get not implemented")
+}
+func (UnimplementedCoordinatorServer) Snapshot(context.Context, *SnapshotAllRequest) (*SnapshotAllResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Snapshot not implemented")
 }
 func (UnimplementedCoordinatorServer) mustEmbedUnimplementedCoordinatorServer() {}
 func (UnimplementedCoordinatorServer) testEmbeddedByValue()                     {}
@@ -502,6 +518,24 @@ func _Coordinator_Get_Handler(srv interface{}, ctx context.Context, dec func(int
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Coordinator_Snapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SnapshotAllRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CoordinatorServer).Snapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Coordinator_Snapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CoordinatorServer).Snapshot(ctx, req.(*SnapshotAllRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Coordinator_ServiceDesc is the grpc.ServiceDesc for Coordinator service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -520,6 +554,10 @@ var Coordinator_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Get",
 			Handler:    _Coordinator_Get_Handler,
+		},
+		{
+			MethodName: "Snapshot",
+			Handler:    _Coordinator_Snapshot_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

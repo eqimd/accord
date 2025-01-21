@@ -34,7 +34,7 @@ func RandomString(length int) string {
 func runTest() {
 	coordinators := []string{
 		"localhost:5000",
-		// "localhost:6000",
+		"localhost:6000",
 		// "localhost:7000",
 	}
 
@@ -53,7 +53,7 @@ func runTest() {
 
 	runsCount := 10000
 
-	keys := make([]string, 0, 1000)
+	keys := make([]string, 0, 10000)
 	for range cap(keys) {
 		keys = append(keys, RandomString(10))
 	}

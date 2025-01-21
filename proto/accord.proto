@@ -108,8 +108,23 @@ message GetResponse {
     map<string, string> result = 1;
 }
 
+message SnapshotAllRequest {}
+
+message SnapshotShard {
+    map<int32, SnapshotKV> replicas = 1;
+}
+
+message SnapshotKV {
+    map<string, string> values = 1;
+}
+
+message SnapshotAllResponse {
+    map<int32, SnapshotShard> shards = 1;
+}
+
 service Coordinator {
     rpc Execute(ExecuteRequest) returns (ExecuteResponse) {}
     rpc Put(PutRequest) returns (PutResponse) {}
     rpc Get(GetRequest) returns (GetResponse) {}
+    rpc Snapshot(SnapshotAllRequest) returns (SnapshotAllResponse) {}
 }

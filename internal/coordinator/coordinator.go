@@ -14,19 +14,6 @@ import (
 	"github.com/eqimd/accord/proto"
 )
 
-// /*
-type monoClock struct {
-	val atomic.Uint64
-}
-
-func (c *monoClock) getTime() uint64 {
-	v := c.val.Add(1)
-
-	return v
-}
-
-// */
-
 type Coordinator struct {
 	pid           int
 	env           *environment.GRPCEnv
@@ -51,9 +38,10 @@ func NewCoordinator(
 	}
 }
 
-func genNewTs(pid int32) *proto.TxnTimestamp {
+func (c *Coordinator) genNewTs() *proto.TxnTimestamp {
 	local := uint64(time.Now().UnixNano())
 	logical := int32(0)
+	pid := int32(c.pid)
 
 	ts := &proto.TxnTimestamp{
 		LocalTime:   &local,
@@ -327,7 +315,7 @@ func (c *Coordinator) read(
 }
 
 func (c *Coordinator) Exec(query string) (string, error) {
-	ts0 := genNewTs(int32(c.pid))
+	ts0 := c.genNewTs()
 
 	keys, err := c.queryExecutor.QueryKeys(query)
 	if err != nil {
@@ -368,7 +356,7 @@ func (c *Coordinator) Exec(query string) (string, error) {
 }
 
 func (c *Coordinator) Put(vals map[string]string) error {
-	ts0 := genNewTs(int32(c.pid))
+	ts0 := c.genNewTs()
 
 	var b strings.Builder
 	keys := make([]string, 0, len(vals))
@@ -403,7 +391,7 @@ func (c *Coordinator) Put(vals map[string]string) error {
 }
 
 func (c *Coordinator) Get(keys []string) (map[string]string, error) {
-	ts0 := genNewTs(int32(c.pid))
+	ts0 := c.genNewTs()
 
 	query := strings.Join(keys, ";")
 
@@ -432,4 +420,8 @@ func (c *Coordinator) Get(keys []string) (map[string]string, error) {
 	)
 
 	return allReads, nil
+}
+
+func (c *Coordinator) Snapshot() (*Snapshot, error) {
+	c.r
 }
