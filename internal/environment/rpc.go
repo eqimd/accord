@@ -96,8 +96,6 @@ func NewGRPCEnv(
 	return env, nil
 }
 
-// TODO add context to env
-
 func (e *GRPCEnv) PreAccept(
 	from, to int,
 	req *proto.PreAcceptRequest,

@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/eqimd/accord/internal/environment"
 	"github.com/eqimd/accord/internal/query"
@@ -14,11 +13,23 @@ import (
 	"github.com/eqimd/accord/proto"
 )
 
+type monoClock struct {
+	val *atomic.Uint64
+}
+
+func (c *monoClock) getTime() uint64 {
+	v := c.val.Add(1)
+
+	return v
+}
+
 type Coordinator struct {
 	pid           int
 	env           *environment.GRPCEnv
 	sharding      *sharding.Hash
 	queryExecutor *query.Executor
+
+	clock *monoClock
 
 	slowPaths *atomic.Uint64
 }
@@ -35,11 +46,12 @@ func NewCoordinator(
 		sharding:      sharding,
 		queryExecutor: queryExecutor,
 		slowPaths:     &atomic.Uint64{},
+		clock:         &monoClock{&atomic.Uint64{}},
 	}
 }
 
 func (c *Coordinator) genNewTs() *proto.TxnTimestamp {
-	local := uint64(time.Now().UnixNano())
+	local := c.clock.getTime()
 	logical := int32(0)
 	pid := int32(c.pid)
 
@@ -85,7 +97,6 @@ func (c *Coordinator) proposeTransaction(
 				resp, err := c.env.PreAccept(c.pid, rpid, req)
 				if err != nil {
 					slog.Error("preaccept error", slog.Any("error", err))
-					// TODO
 				}
 
 				shardChan <- resp
@@ -161,7 +172,6 @@ func (c *Coordinator) proposeTransaction(
 					resp, err := c.env.Accept(c.pid, rpid, req)
 					if err != nil {
 						slog.Error("accept error", slog.Any("error", err))
-						// TODO
 					}
 
 					shardChan <- resp
@@ -205,7 +215,6 @@ func (c *Coordinator) proposeTransaction(
 				err := c.env.Commit(c.pid, rpid, req)
 				if err != nil {
 					slog.Error("commit error", slog.Any("error", err))
-					// TODO
 				}
 			}(replicaPid)
 		}
@@ -241,7 +250,6 @@ func (c *Coordinator) apply(
 				err := c.env.Apply(c.pid, rpid, req)
 				if err != nil {
 					slog.Error("apply error", slog.Any("error", err))
-					// TODO
 				}
 			}(shardID, replicaPid)
 		}
@@ -297,7 +305,6 @@ func (c *Coordinator) read(
 			)
 			if err != nil {
 				slog.Error("read error", slog.Any("error", err))
-				// TODO
 			}
 			mu.Lock()
 
@@ -320,7 +327,6 @@ func (c *Coordinator) Exec(query string) (string, error) {
 	keys, err := c.queryExecutor.QueryKeys(query)
 	if err != nil {
 		slog.Error("keys error")
-		// TODO
 	}
 
 	shardToKeys := c.sharding.ShardToKeys(keys)

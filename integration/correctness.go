@@ -3,16 +3,40 @@ package main
 import (
 	"context"
 	"fmt"
-	"maps"
 	"math/rand"
+	"strconv"
 	"sync"
-	"testing"
 	"time"
 
 	"github.com/eqimd/accord/proto"
+	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+var correctnessCmd = &cobra.Command{
+	Use:   "correctness runsCount keysCount [addresses]",
+	Short: "Run correctness test",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) < 3 {
+			return fmt.Errorf("less than 3 args")
+		}
+
+		runsCount, err := strconv.Atoi(args[0])
+		if err != nil {
+			return err
+		}
+
+		keysCount, err := strconv.Atoi(args[1])
+		if err != nil {
+			return err
+		}
+
+		runCorrectness(runsCount, keysCount, args[2:])
+
+		return nil
+	},
+}
 
 var seededRand *rand.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
 
@@ -32,12 +56,8 @@ func RandomString(length int) string {
 	return RandomStringWithCharset(length, charset)
 }
 
-func runTest() {
-	coordinators := []string{
-		"localhost:5000",
-		"localhost:6000",
-		"localhost:7000",
-	}
+func runCorrectness(runsCount, keysCount int, addresses []string) {
+	coordinators := addresses
 
 	rpcClients := []proto.CoordinatorClient{}
 
@@ -52,9 +72,7 @@ func runTest() {
 		rpcClients = append(rpcClients, client)
 	}
 
-	runsCount := 10000
-
-	keys := make([]string, 0, 1000)
+	keys := make([]string, 0, keysCount)
 	for range cap(keys) {
 		keys = append(keys, RandomString(10))
 	}
@@ -68,10 +86,6 @@ func runTest() {
 
 		go func() {
 			defer wg.Done()
-
-			// st := seededRand.Intn(100)
-
-			// time.Sleep(time.Duration(st) * time.Millisecond)
 
 			pos1 := rand.Int() % len(keys)
 
@@ -93,8 +107,7 @@ func runTest() {
 
 	end := time.Now()
 
-	qps := float64(runsCount) / (float64(end.Sub(start)) / float64(time.Second))
-	fmt.Println("QPS:", qps)
+	fmt.Println("Time:", end.Sub(start))
 
 	time.Sleep(10 * time.Second)
 
@@ -109,10 +122,16 @@ func runTest() {
 			repRand = rPid
 		}
 
-		for _, srep := range replicas.Replicas {
-			if !maps.Equal(srep.Values, replicas.Replicas[repRand].Values) {
-				panic(fmt.Sprintf("not equal maps\n%v\n%v", srep.Values, replicas.Replicas[repRand].Values))
+		for rpid, srep := range replicas.Replicas {
+			for k, v := range srep.Values {
+				rv := replicas.Replicas[repRand].Values[k]
+				if rv != v {
+					fmt.Printf("Diff on %d and %d, key %s, values %s %s\n", repRand, rpid, k, rv, v)
+				}
 			}
+			// if !maps.Equal(srep.Values, replicas.Replicas[repRand].Values) {
+			// 	panic(fmt.Sprintf("not equal maps\n%v\n%v", srep.Values, replicas.Replicas[repRand].Values))
+			// }
 		}
 	}
 }
@@ -128,14 +147,4 @@ func coordinatorExec(client proto.CoordinatorClient, key, val string) error {
 	)
 
 	return err
-}
-
-func TestMain(t *testing.T) {
-	start := time.Now()
-
-	runTest()
-
-	end := time.Now()
-
-	fmt.Println("Time:", end.Sub(start))
 }

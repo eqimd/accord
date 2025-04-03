@@ -1,6 +1,7 @@
 package replica
 
 import (
+	"log/slog"
 	"sync"
 
 	"github.com/eqimd/accord/internal/common"
@@ -44,28 +45,6 @@ type replicaState struct {
 	// txnInfo sync.Map
 	txnInfo map[txnWrap]*txnInfo
 }
-
-// func (rs *replicaState) getTxnInfo(txn txnWrap) (*txnInfo, bool) {
-// 	var ptr *txnInfo
-
-// 	val, ok := rs.txnInfo.Load(txn)
-
-// 	if ok {
-// 		ptr = val.(*txnInfo)
-// 	}
-
-// 	return ptr, ok
-// }
-
-// func (rs *replicaState) getAndDeleteTxnInfo(txn txnWrap) *txnInfo {
-// 	val, _ := rs.txnInfo.LoadAndDelete(txn)
-
-// 	return val.(*txnInfo)
-// }
-
-// func (rs *replicaState) setTxnInfo(txn txnWrap, info *txnInfo) {
-// 	rs.txnInfo.Store(txn, info)
-// }
 
 func newReplicaState() *replicaState {
 	return &replicaState{
@@ -252,7 +231,7 @@ func (r *Replica) Read(
 
 	vals, err := r.storage.GetBatch(request.Keys)
 	if err != nil {
-		// TODO
+		slog.Error("storage GetBatch error", "error", err)
 	}
 
 	reads := make(map[string]string, len(request.Keys))
@@ -275,7 +254,7 @@ func (r *Replica) Apply(
 
 	err := r.storage.SetBatch(request.Result)
 	if err != nil {
-		// TODO
+		slog.Error("storage SetBatch error", "error", err)
 	}
 
 	wrap := wrapGRPCTxn(request.Txn)
