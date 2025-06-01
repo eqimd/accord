@@ -1,6 +1,6 @@
 ## Accord Consensus Implementation
 
-The repository contains simple in-memory key-value distributed database implementation of Accord Consensus protocol in Golang.
+The repository contains simple in-memory key-value distributed database implementation with Accord Consensus protocol in Golang.
 
 ### Coordinator and Replica
 
